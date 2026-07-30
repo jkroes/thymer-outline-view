@@ -148,15 +148,8 @@ Three limitations, all from the same missing primitive:
   view swaps the status bar to Escape/Enter/Browse via
   `getPeekStatusBarContext()`. Neither is reachable: the class goes on a panel
   node a plugin has no business touching, and the status-bar *shortcut context*
-  comes from a view's `qe()`, which custom views don't supply. `ui.addStatusBarItem()`
-  could add a "Peeking" item alongside the defaults if it ever seems worth it.
-  As it stands a peeked panel looks like a normally-opened one.
-
-Unrelated to peek, the same `qe()` gap is why this view's status bar differs
-from List's at all times: native views return a shortcut list with
-`skipDefaultShortcuts: true`, so List shows its own set (Search / Peek / Edit
-cell / Open Aside / …). A custom view supplies none, so the app's defaults show
-instead.
+  comes from a view's `qe()` (see the status-bar note below). As it stands a
+  peeked panel looks like a normally-opened one.
 
 ## Things the app does that aren't in the SDK docs
 
@@ -253,6 +246,17 @@ API) and no reliable signal to clean it up afterwards. Navigating the view's own
 panel works, but then settings replaces the view. Community plugins only close
 panels from their own buttons, where they own the trigger. Hence: no settings
 navigation here at all.
+
+**The status bar can be added to, never replaced.** Native views own their
+status bar: `qe()` returns a shortcut list plus `skipDefaultShortcuts: true`, so
+List advertises its own set (Search, Peek, Edit cell, Open Aside, Insert Row,
+Trash Row) *instead of* the app defaults, and swaps in a different set again
+while peeking via `getPeekStatusBarContext()`. There is no `qe()` equivalent for
+a custom view and no SDK call for the shortcut context, so this view always
+shows the app's default shortcuts — which is why its status bar doesn't match
+List's, peeking or not. The only lever is `ui.addStatusBarItem({label, icon,
+tooltip, onClick})`, which *appends* an item and cannot remove or override what
+is already there.
 
 **Choice colors.** `color` on a choice is an index into the bundle's palette
 array (`At`), whose `className` values feed `.enum-color-*` and the
