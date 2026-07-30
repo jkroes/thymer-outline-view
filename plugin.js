@@ -32,14 +32,16 @@ function timeAgo(date) {
 }
 
 /**
- * Build a parent/child forest from records linked by a "Parent" property.
- * Records whose Parent is unset or points outside the set become roots.
- * Records caught in a Parent cycle are promoted to roots so they stay visible.
+ * Build a parent/child forest from records linked by `parentFieldId`.
+ * Records whose parent is unset or points outside the set become roots.
+ * Records caught in a cycle are promoted to roots so they stay visible — the
+ * app's own sub-page writes refuse cycles, but a record-link field is free to
+ * hold one, and so is a sub-page link written before this view existed.
  */
-function buildHierarchy(records) {
+function buildHierarchy(records, parentFieldId) {
 	const nodes = new Map();
 	records.forEach(record => {
-		const parent = record.linkedRecord('Parent');
+		const parent = parentFieldId ? record.linkedRecord(parentFieldId) : null;
 		nodes.set(record.guid, {
 			id: record.guid,
 			name: record.getName() || 'Unknown',
@@ -140,6 +142,23 @@ export class Plugin extends CollectionPlugin {
 				const map = {};
 				(plugin.getConfiguration().fields || []).forEach(f => { map[f.id] = f; });
 				return map;
+			};
+
+			/**
+			 * The field the tree is read from: the collection's own sub-page link if
+			 * sub-pages are on, otherwise the first record field pointing back at this
+			 * collection. `parent_page` is what `collection.enableSubPages(true)`
+			 * provisions — a plain record field labelled "Sub-page of", filtered to
+			 * this collection — so it needs no special handling to READ. Writes go
+			 * through setSubPageOf(), which is what refuses cycles.
+			 */
+			const hierarchyFieldId = () => {
+				const fields = plugin.getConfiguration().fields || [];
+				if (fields.some(f => f.id === 'parent_page' && f.active !== false)) return 'parent_page';
+				const self = fields.find(f => f.type === 'record'
+					&& f.active !== false
+					&& f.filter_colguid === collectionGuid());
+				return self ? self.id : null;
 			};
 
 			const choiceColorsFor = (field) => {
@@ -869,18 +888,25 @@ export class Plugin extends CollectionPlugin {
 
 				if (field.type === 'record') {
 					const linked = record.linkedRecord(field.id);
+					// The sub-page link is written through its own setter, which is
+					// where the app's cycle and same-collection checks live. Every
+					// other record field is a plain property write.
+					const link = (guid) => {
+						if (field.id === 'parent_page') record.setSubPageOf(guid);
+						else prop().set(guid);
+					};
 					recordCandidates(field, node).then(candidates => {
 						if (viewContext.isDestroyed()) return;
 						const items = [{
 							label: 'None', icon: 'ti-x',
 							active: !linked,
-							onSelect: () => { prop().set(null); focusView(); afterWrite(); },
+							onSelect: () => { link(null); focusView(); afterWrite(); },
 						}];
 						candidates.forEach(c => items.push({
 							label: c.name,
 							icon,
 							active: linked && linked.guid === c.guid,
-							onSelect: () => { prop().set(c.guid); focusView(); afterWrite(); },
+							onSelect: () => { link(c.guid); focusView(); afterWrite(); },
 						}));
 						showMenu(items, rect.left, rect.bottom + 2, `${field.label}...`);
 					});
@@ -1533,7 +1559,7 @@ export class Plugin extends CollectionPlugin {
 				},
 
 				onRefresh: ({ records }) => {
-					hierarchy = buildHierarchy(records);
+					hierarchy = buildHierarchy(records, hierarchyFieldId());
 					if (!$list) mount();
 					renderToolbar();
 					renderRows();

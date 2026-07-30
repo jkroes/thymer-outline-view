@@ -101,16 +101,16 @@
         {
           "active": true,
           "color": "13",
-          "icon": "ti-building-skyscraper",
-          "id": "1NQTA7YSV5P6DH78568HJ827ZP",
-          "label": "Organizations"
+          "icon": "ti-bulb",
+          "id": "1PDRT2DZBMXDJS3BXEDVKK7SES",
+          "label": "Examples"
         },
         {
           "active": true,
           "color": "13",
-          "icon": "ti-bulb",
-          "id": "1PDRT2DZBMXDJS3BXEDVKK7SES",
-          "label": "Examples"
+          "icon": "ti-building-skyscraper",
+          "id": "1NQTA7YSV5P6DH78568HJ827ZP",
+          "label": "Organizations"
         }
       ],
       "icon": "ti-folders",
@@ -121,7 +121,7 @@
       "type": "choice"
     },
     {
-      "active": true,
+      "active": false,
       "filter_colguid": "1NQTA7YSV5P6DH78568HJ827ZP",
       "icon": "ti-align-left",
       "id": "F2PW9BM2MJ5MSCA",
@@ -221,6 +221,16 @@
       "many": false,
       "read_only": false,
       "type": "text"
+    },
+    {
+      "active": true,
+      "filter_colguid": "1NQTA7YSV5P6DH78568HJ827ZP",
+      "icon": "ti-list-tree",
+      "id": "parent_page",
+      "label": "Sub-page of",
+      "many": false,
+      "read_only": false,
+      "type": "record"
     }
   ],
   "home": false,
@@ -233,7 +243,6 @@
   },
   "name": "Organizations",
   "page_field_ids": [
-    "F2PW9BM2MJ5MSCA",
     "FYA00RYH9C11VZR",
     "F18APEN0SDZMAJV"
   ],
@@ -254,25 +263,7 @@
       "description": "",
       "field_ids": [
         "title",
-        "F2PW9BM2MJ5MSCA",
-        "FYA00RYH9C11VZR",
         "F18APEN0SDZMAJV"
-      ],
-      "group_by_field_id": "updated_at",
-      "icon": "ti-list",
-      "id": "list",
-      "label": "List",
-      "read_only": false,
-      "shown": true,
-      "sort_dir": "desc",
-      "sort_field_id": "updated_at",
-      "type": "list"
-    },
-    {
-      "description": "",
-      "field_ids": [
-        "title",
-        "FYA00RYH9C11VZR"
       ],
       "group_by_field_id": null,
       "icon": "ti-list-tree",
@@ -285,6 +276,22 @@
       "sort_dir": "asc",
       "sort_field_id": "title",
       "type": "custom"
+    },
+    {
+      "description": "",
+      "field_ids": [
+        "FYA00RYH9C11VZR",
+        "F18APEN0SDZMAJV"
+      ],
+      "group_by_field_id": "updated_at",
+      "icon": "ti-list",
+      "id": "list",
+      "label": "List",
+      "read_only": false,
+      "shown": true,
+      "sort_dir": "desc",
+      "sort_field_id": "updated_at",
+      "type": "list"
     }
   ]
 }

@@ -4,9 +4,13 @@ A `CollectionPlugin` for the **Organizations** collection that adds one custom
 view, **Outline** (view id `outline`): the collection rendered as an indented,
 collapsible tree, styled to sit alongside the built-in List view.
 
-Hierarchy comes from `Parent`, a `record` property pointing back at
-Organizations. Records with no `Parent` (or one outside the result set) become
-roots.
+Hierarchy comes from **sub-pages** — `parent_page`, the field the app itself
+provisions. Records with no parent (or one outside the result set) become
+roots. `hierarchyFieldId()` picks the field: `parent_page` when the collection
+has sub-pages on, otherwise the first `record` field whose `filter_colguid` is
+this collection, so the view still works on a collection that nests through a
+hand-made field. See "Sub-pages" below for what that field is and what it does
+not do.
 
 ## Files
 
@@ -63,6 +67,14 @@ bin/thymercli plugin show Organizations -w W3TZX0YZ4FRCMSHGB976K32N4D --json | j
   order. A view left with no sort field falls back to Title.
 - **Peek** on Space: opens the focused record in the side panel, follows the
   selection as you keep arrowing, and a second Space closes that panel.
+- **Property mode on E**: the focused row's fields open as an indented list
+  under it, ↑/↓ walk them, Enter edits the highlighted one, Escape or E closes.
+  Text and number get an inline input; choice and record-link get the same
+  filter menu the sort button uses. See below for how the field list is chosen
+  and how the writes are made.
+- **New \<item\> leaves the row in place** with its name in edit mode, rather
+  than navigating to the new page. Leaving it unnamed discards the record, as
+  native does with an untouched new card.
 - **Collapse/expand is ⌘↑/⌘↓**, not ←/→ — those cycle rows, matching the way
   the arrows behave everywhere else in the panel.
 - **Keys and mouse follow the native list view**, read out of the bundle rather
@@ -87,14 +99,14 @@ falls through untouched.
 | Home / End | first / last card | same |
 | Enter | open focused record in this panel; during a peek, *commit* the preview | same |
 | ⌘/Ctrl+Enter | open aside (other panel); during a peek, commit | same |
-| Shift+Enter | create a card below | create (position not controllable) |
+| Shift+Enter | create a card below | create (position not controllable), then the new row's name opens for editing in place |
 | Alt+Enter | create a card above | — no SDK call for positioned create |
 | Space | peek — put the record in the side panel; Space again closes it | same |
 | Escape | exit peek, or cancel an untouched new card | closes the peek panel |
 | ⌘+[ / ⌘+] | panel history back / forward | the app's own, but see the peek history note |
 | `/` | focus the collection search box | same |
 | M | move mode — keyboard drag-reorder, refused while sorted | — no SDK write for the per-view `$o:<viewId>` order key |
-| E | property mode — ↑/↓ through a card's properties, Enter edits | — no SDK inline property editor |
+| E | property mode — ↑/↓ through a card's properties, Enter edits | same, drawn and driven here: the app's card editor is unreachable, so the field list, the highlight and the editors are all rebuilt. See "Property mode" below |
 | trash shortcut | trash the focused record | — not implemented |
 | left click | focus the card, then open in this panel | same |
 | Shift+click | focus only, no open | same |
@@ -172,6 +184,79 @@ Three limitations, all from the same missing primitive:
   node a plugin has no business touching, and the status-bar *shortcut context*
   comes from a view's `qe()` (see the status-bar note below). As it stands a
   peeked panel looks like a normally-opened one.
+
+## Property mode
+
+Native property mode belongs to the card component: E flips card state, ↑/↓
+walk its property rows and Enter focuses that row's inline field editor. None
+of it is reachable — `UIAPI` offers `createDropdown`, `createButton`, panels
+and toasters, and nothing that edits a property — so all of it is rebuilt here.
+What *is* complete is the write side: `PluginProperty` has `set()`,
+`setChoice()`, `choices()`, and writes sync without a plugin reload.
+
+**The field list is not the row's chips.** Native walks only a card's shown
+properties. `editableFields()` walks Title, then the shown ones, then every
+other active editable field — because the field that shapes the tree
+(`parent_page`) is not one the view displays, and not being able to reparent
+from the outline would miss the point of editing here. `icon` and `collection`
+are skipped, as are read-only fields and the types with no editor
+(`EDITABLE_TYPES` is text, number, choice, record).
+
+**Writes go through the field's own setter where it has one.** A record-link
+field is a plain `prop().set(guid)` — except `parent_page`, which uses
+`record.setSubPageOf(guid)`, since that is where the app's cycle and
+same-collection checks live. The picker also drops the row's own descendants,
+so a cycle can't be offered in the first place; for a field pointing at a
+*different* collection the candidates are fetched from that collection
+(`data.getPluginByGuid(field.filter_colguid).getAllRecords()`).
+
+**A write is not readable in the same tick** (see the SDK's write/read model),
+and the refresh that follows arrives when it arrives, so `afterWrite()`
+re-renders on a short timer rather than immediately.
+
+**Inline inputs must stop their own keys.** While the caret is in one, the
+view's key hook would otherwise read Enter and the arrows as row navigation;
+the input calls `stopPropagation()`, and `onKeyboardNavigation` ignores any
+event that arrives while an `.outline-inline-input` holds focus.
+
+## Sub-pages
+
+Sub-pages are not a separate mechanism. `collection.enableSubPages(true)`
+appends **one ordinary field** to the collection config and nothing else:
+
+```json
+{ "id": "parent_page", "label": "Sub-page of", "type": "record",
+  "filter_colguid": "<this collection's guid>", "many": false }
+```
+
+The field's presence *is* the switch — there is no separate flag. Verified
+live on Organizations 2026-07-30, where the collection had been nesting through
+a hand-made `Parent` field until then; the 8 records were migrated to
+`parent_page` over MCP and `Parent` was archived (`active: false`, which keeps
+its data).
+
+What that run established, all of it verified rather than assumed:
+
+- **Enabling sub-pages does not touch the sidebar.** `sidebar_display_mode`
+  stayed `hidden_records`. The native sidebar tree that `Notes` gets comes from
+  `"mode": "nested"`, which is a separate setting — and nothing about the
+  relation depends on it.
+- **Sub-pages are not hidden from the collection's record set.** With a record
+  nested, all 8 still enumerate. The view sees children.
+- **Trashing a parent does not cascade.** The child stays live with its
+  `Sub-page of` pointing at a trashed guid — a dangling link, exactly as a
+  hand-made record field behaves. Untrashing restores both sides. That was MCP
+  trash; **trashing from the app's own UI is untested** and may well differ.
+- **The Markdown Mirror treats it as an ordinary field**: frontmatter
+  `Sub-page of: "[Name](Name.md)"`, files stay **flat** in the collection folder
+  (sub-pages produce no directory nesting), and editing that line on disk sets
+  the real relation.
+- **MCP writes it**: `update_record_property` with `parent_page` works and `""`
+  clears it. It is single-valued, so the multi-value transport bug doesn't
+  apply — a `Parent` → `parent_page` migration is scriptable over MCP alone.
+
+The one thing given up versus a hand-made field: exactly one hierarchy per
+collection, single-valued, same-collection only.
 
 ## Things the app does that aren't in the SDK docs
 
@@ -316,7 +401,9 @@ cursor; menus here do the same against `.outline-root`.
   clear `.is-stacked` from every row before measuring: a stacked row has a
   full-width name, so it measures as fitting and rows would oscillate. Reads
   and writes are batched to keep it at one forced layout per pass.
-- `buildHierarchy()` promotes any record caught in a `Parent` cycle to a root.
+- `buildHierarchy()` promotes any record caught in a parent cycle to a root.
   Without it those records are unreachable from any root and vanish silently.
+  `setSubPageOf()` refuses to create one, but a hand-made record field is free
+  to hold a cycle and so is a sub-page link written before this view existed.
 - Sibling order is whatever the app hands over, so the view's sort actually
   applies. Don't re-sort inside `buildHierarchy()`.
