@@ -76,9 +76,10 @@ falls through untouched.
 
 | input | native list view | here |
 |---|---|---|
-| ↓ / Tab | next card; wraps past the last via `(r % len + len) % len` | same |
-| ↑ | previous card; from the **first** row it focuses the search box instead of wrapping | same |
-| Shift+Tab | *unhandled* — falls through, no `preventDefault` | same (left to the browser) |
+| ↓ | next card; wraps past the last via `(r % len + len) % len` | same |
+| ↑ | previous card; from the **first** row it focuses the search box instead of wrapping. From the search box focus carries on up, out of the panel content | same, and ArrowUp in the search box is left unhandled so the app takes focus onward |
+| Tab | joins the panel's focus order — breadcrumb → view tabs → New \<item\> → sort field → sort direction → search box → rows, then steps down the rows | same from the search box down; the breadcrumb is the app's and out of reach |
+| Shift+Tab | **no defined behavior.** `Wi(e)` normalizes it to `"Shift+Tab"`, which matches no case in the cards switch, so it falls through with no `preventDefault` and the browser's sequential focus order takes over — from the card, its title, or a property row, whichever holds focus. Lands on the toolbar or the search box seemingly at random | same: left unhandled, on purpose |
 | ← / → | move by one grid column, so a no-op in a 1-column list | collapse / expand, or step to parent / first child |
 | Home / End | first / last card | same |
 | Enter | open focused record in this panel; during a peek, *commit* the preview | same |

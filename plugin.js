@@ -845,12 +845,21 @@ export class Plugin extends CollectionPlugin {
 				});
 				// Arrow keys must still drive the list while the caret is in the box.
 				$search.addEventListener('keydown', (e) => {
-					if (e.key === 'ArrowDown') {
+					if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
 						// Native hands focus from the search box to the FIRST row
-						// (focusFromCollectionSearch), and the box gives up focus.
+						// (focusFromCollectionSearch), and the box gives up focus. Tab
+						// does the same: the search box is the last stop in the
+						// toolbar-then-search-then-rows order, so Tab enters the list.
 						e.preventDefault();
 						$search.blur();
+						focusView();
 						setSelection(0);
+					} else if (e.key === 'ArrowUp') {
+						// Up out of the search box goes to the ACTIVE view tab (and from
+						// there the app's title, which this view can't focus).
+						e.preventDefault();
+						const $active = $toolbar && $toolbar.querySelector('.outline-tb-tab.is-active');
+						if ($active) $active.focus();
 					} else if (e.key === 'Enter') {
 						e.preventDefault();
 						openSelected(e.metaKey || e.ctrlKey);
@@ -1186,8 +1195,44 @@ export class Plugin extends CollectionPlugin {
 				onKeyboardNavigation: ({ e }) => {
 					// An open menu owns the keyboard; its own keydown drives it.
 					if ($menu) return;
+
+					// The hook still fires while something OUTSIDE this view holds
+					// focus — the panel's breadcrumb button, for one. Treating those
+					// keys as row navigation made Tab jump into the rows from up
+					// there, and Shift+Tab land in the search box. Only act when the
+					// focused element is ours, or when nothing in particular has focus
+					// (document.body), which is the state the view sits in normally.
+					const $focused = document.activeElement;
+					if ($focused && $focused !== document.body
+						&& $root && !$root.contains($focused)) return;
 					// The search box handles its own keys via its keydown listener.
 					if ($search && document.activeElement === $search) return;
+
+					// While a toolbar button holds focus, the arrows belong to the
+					// toolbar, not the rows. The chain going down is
+					// title -> active view tab -> search -> rows; going up reverses it,
+					// and above the tabs it is the app's title, out of reach here.
+					if ($toolbar && $toolbar.contains(document.activeElement)) {
+						if (e.key === 'ArrowDown' && $search) {
+							e.preventDefault();
+							$search.focus();
+							return;
+						}
+						// Tab is driven by hand rather than left to the browser: the
+						// default never arrives here (Shift+Tab's does), so relying on
+						// it dropped straight into the rows.
+						if (e.key === 'Tab' && !e.shiftKey) {
+							e.preventDefault();
+							const $buttons = Array.from($toolbar.querySelectorAll('button'));
+							const at = $buttons.indexOf(document.activeElement);
+							const $next = at === -1 ? null : $buttons[at + 1];
+							if ($next) $next.focus();
+							else if ($search) $search.focus();
+							return;
+						}
+						return;
+					}
+
 					if (rows.length === 0) return;
 					const current = rows[selectedIndex];
 					if (!current) return;
@@ -1229,9 +1274,11 @@ export class Plugin extends CollectionPlugin {
 
 					switch (e.key) {
 						case 'Tab':
-							// Shift+Tab is NOT handled by the native card views — it
-							// falls through their switch untouched. Leave it to the
-							// browser here too.
+							// Only plain Tab is row navigation. The native card handler
+							// normalizes the event first, and its switch has no
+							// "Shift+Tab" case, so that one falls through with no
+							// preventDefault and the browser's own focus order takes
+							// over — which is why native Shift+Tab looks erratic.
 							if (e.shiftKey) return;
 							e.preventDefault();
 							selectNext(1);
