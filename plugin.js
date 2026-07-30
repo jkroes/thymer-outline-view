@@ -1232,6 +1232,18 @@ export class Plugin extends CollectionPlugin {
 							$search.focus();
 							return;
 						}
+						// Left/Right cycle along the toolbar. They must be swallowed:
+						// unhandled, the app reads them as move-panel-left/right.
+						if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+							e.preventDefault();
+							const $buttons = Array.from($toolbar.querySelectorAll('button'));
+							const at = $buttons.indexOf(document.activeElement);
+							if (at !== -1 && $buttons.length) {
+								const step = e.key === 'ArrowRight' ? 1 : -1;
+								$buttons[(at + step + $buttons.length) % $buttons.length].focus();
+							}
+							return;
+						}
 						// Tab is driven by hand rather than left to the browser: the
 						// default never arrives here (Shift+Tab's does), so relying on
 						// it dropped straight into the rows.
@@ -1286,6 +1298,27 @@ export class Plugin extends CollectionPlugin {
 						return;
 					}
 
+					// Collapse/expand lives on Cmd/Ctrl + ↑/↓, leaving ←/→ free to
+					// walk rows. ↓ opens a node, ↑ closes it or climbs to the parent.
+					// With nothing to open or close they fall back to plain ↑/↓, so
+					// the key never feels dead on a leaf.
+					if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+						e.preventDefault();
+						const hasChildren = current.node.children.length > 0;
+						if (e.key === 'ArrowDown') {
+							if (hasChildren && !isExpanded(current.node)) toggle(current.node);
+							else selectNext(1);
+						} else if (hasChildren && isExpanded(current.node)) {
+							toggle(current.node);
+						} else if (current.parent) {
+							const up = rows.findIndex(r => r.node.id === current.parent.id);
+							if (up !== -1) setSelection(up);
+						} else {
+							selectNext(-1);
+						}
+						return;
+					}
+
 					switch (e.key) {
 						case 'Tab':
 							// Only plain Tab is row navigation. The native card handler
@@ -1308,22 +1341,15 @@ export class Plugin extends CollectionPlugin {
 							if (selectedIndex === 0 && $search) $search.focus();
 							else selectNext(-1);
 							break;
+						// ←/→ cycle rows like ↑/↓ do. They also have to be swallowed:
+						// left alone, the app moves the panel left/right.
 						case 'ArrowRight':
 							e.preventDefault();
-							if (current.node.children.length && !isExpanded(current.node)) {
-								toggle(current.node);
-							} else if (current.node.children.length) {
-								setSelection(selectedIndex + 1);
-							}
+							selectNext(1);
 							break;
 						case 'ArrowLeft':
 							e.preventDefault();
-							if (current.node.children.length && isExpanded(current.node)) {
-								toggle(current.node);
-							} else if (current.parent) {
-								const up = rows.findIndex(r => r.node.id === current.parent.id);
-								if (up !== -1) setSelection(up);
-							}
+							selectNext(-1);
 							break;
 						case 'Home':
 							e.preventDefault();

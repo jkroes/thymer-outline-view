@@ -63,6 +63,8 @@ bin/thymercli plugin show Organizations -w W3TZX0YZ4FRCMSHGB976K32N4D --json | j
   order. A view left with no sort field falls back to Title.
 - **Peek** on Space: opens the focused record in the side panel, follows the
   selection as you keep arrowing, and a second Space closes that panel.
+- **Collapse/expand is ⌘↑/⌘↓**, not ←/→ — those cycle rows, matching the way
+  the arrows behave everywhere else in the panel.
 - **Keys and mouse follow the native list view**, read out of the bundle rather
   than guessed — see the table below for what matches and what can't.
 
@@ -80,7 +82,8 @@ falls through untouched.
 | ↑ | previous row; from the **first** row the search box, then the active view tab, then the panel title | same up to the view tab. The title is the app's, so ArrowUp there is left alone |
 | Tab | view tabs → the buttons to their right → search box → rows, then steps down the rows and wraps | same. Toolbar Tab is moved by hand: the browser default never reaches the view, though Shift+Tab's does |
 | Shift+Tab | **no defined behavior.** `Wi(e)` normalizes it to `"Shift+Tab"`, which matches no case in the cards switch, so it falls through with no `preventDefault` and the browser's focus order decides — starting from the card, its title, or a property row, whichever holds focus. Lands on the toolbar or the search box seemingly at random | same: left unhandled on purpose. Reaching the *same* elements needed the selected row to hold real DOM focus — see below |
-| ← / → | move by one grid column, so a no-op in a 1-column list | collapse / expand, or step to parent / first child |
+| ← / → | move by one grid column — a no-op in a 1-column list, so the app reads them as move-panel-left/right | cycle rows, ← up and → down, both wrapping. On a toolbar button they cycle along the buttons instead. Swallowed either way, or the panel shifts |
+| ⌘/Ctrl + ↑ / ↓ | — | collapse / expand. ⌘↓ opens a collapsed node, ⌘↑ closes an open one or climbs to the parent; with nothing to open or close, both fall back to plain ↑/↓ so the key is never dead on a leaf |
 | Home / End | first / last card | same |
 | Enter | open focused record in this panel; during a peek, *commit* the preview | same |
 | ⌘/Ctrl+Enter | open aside (other panel); during a peek, commit | same |
