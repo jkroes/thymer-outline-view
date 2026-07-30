@@ -57,6 +57,10 @@ bin/thymercli plugin show Organizations -w W3TZX0YZ4FRCMSHGB976K32N4D --json | j
 - **Rebuilt toolbar** (custom views get none — see below): view tabs, Add view,
   New <item>, Configure view, sort field, sort direction. Right-clicking a tab
   gives Rename View / Edit View, mirroring the app's own context menu.
+- **Sort menu** offers the same fields the app does, from its own predicate (see
+  below). It does *not* offer Custom Order — that sorts on a per-view drag
+  position this view has no way to write, so it could only ever mean creation
+  order. A view left with no sort field falls back to Title.
 - **Keyboard**: ↑/↓ move, → expand or descend, ← collapse or go to parent,
   Home/End, Enter opens, Shift+Enter creates.
 
@@ -119,7 +123,45 @@ declarations.
 ```
 
 `collection_settings` is a real nav type in the app's enum but is not in the
-SDK types, so treat it as liable to change.
+SDK types, so treat it as liable to change. `{ openAddView: true }` is what the
+toolbar's `+` passes.
+
+**Which fields the app offers as sort keys** — its predicate, not the schema:
+
+```js
+fp(f) = f.active && f.id !== 'icon'
+        && f.type !== 'file' && f.type !== 'image' && f.type !== 'banner'
+// plus f.id !== 'parent_page', and f.id !== 'collection' unless a dynamic collection
+```
+
+`parent_page` and `collection` are hardcoded id constants in the bundle. The app
+also offers "Custom Order" as the empty field id, which sorts on
+`record.j["$o:<viewId>"]` — a fractional-index string written on drag, synced,
+and independent per view. A record without one falls back to a key derived from
+its creation time, which is why an untouched view in Custom Order looks like
+creation order.
+
+**Do not `ui.createPanel()` for collection settings.** Dismissing settings runs:
+
+```js
+function P5(o){
+  let e = o.getNavigation().state?.returnToNavigation;
+  if (e) { o.navigateTo(e, true); return; }
+  o.getType() === q.CollectionSettings && o.navigateBack() || o.closePanel();
+}
+```
+
+It only closes the panel when `navigateBack()` *fails*. A panel from
+`createPanel()` arrives with its own placeholder already in history, so back
+succeeds and you are left with an empty stray panel. There is no SDK option to
+create a panel without that history entry (`createPanel` takes only
+`afterPanel`, `navigateTo` has no replace flag, `PluginPanel` has no history
+API), and no reliable signal to clean it up afterwards — `panel.navigated` is
+`panel/navigateComplete`, emitted per panel-body component, and the placeholder
+does not appear to emit it. Four attempts at detect-and-close all failed. This
+view reuses an existing panel or its own instead, which cannot orphan anything.
+No plugin in the 79 vendored community examples solves this either; they only
+close panels from their own buttons, where they own the trigger.
 
 **Choice colors.** `color` on a choice is an index into the bundle's palette
 array (`At`), whose `className` values feed `.enum-color-*` and the

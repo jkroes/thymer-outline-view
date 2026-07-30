@@ -179,24 +179,53 @@ export class Plugin extends CollectionPlugin {
 			};
 
 			const navigateToView = (viewId) => navigate('overview', viewId);
-			const openCollectionSettings = () => navigate('collection_settings', null);
 
 			/**
-			 * "Edit View..." — collection settings scoped to one view, the same shape
-			 * the app's own context menu uses (openCollectionSettings with openViewId).
+			 * Where collection settings should land. The app reuses a settings panel
+			 * already open on this collection, and otherwise puts it somewhere other
+			 * than the panel you clicked from — so the view stays on screen.
 			 */
-			const openViewEditor = (viewId) => {
+			/**
+			 * Where collection settings should land. Reuse a settings panel already
+			 * open on this collection, else any other non-sidebar panel, else our own.
+			 *
+			 * Deliberately never ui.createPanel(): dismissing settings runs
+			 * `navigateBack() || closePanel()`, and a created panel arrives with its
+			 * own placeholder already in history, so back succeeds and it is left
+			 * open and empty. There is no SDK way to create a panel without that
+			 * history, and no reliable signal for cleaning it up afterwards.
+			 */
+			const settingsPanel = (self) => {
+				const panels = ui.getPanels().filter(p => !p.isSidebar());
+				const alreadyOpen = panels.find(p => {
+					const nav = p.getNavigation();
+					return nav && nav.type === 'collection_settings' && nav.rootId === collectionGuid();
+				});
+				if (alreadyOpen) return alreadyOpen;
+				return panels.find(p => p.getId() !== self.getId()) || self;
+			};
+
+			/**
+			 * Collection settings, optionally scoped: { openViewId } is what the app's
+			 * "Edit View..." passes, { openAddView: true } is what its "+" passes.
+			 */
+			const openSettings = (state) => {
 				const panel = ownPanel();
 				if (!panel) return;
 				const nav = panel.getNavigation();
-				panel.navigateTo({
+				const target = settingsPanel(panel);
+				target.navigateTo({
 					type: 'collection_settings',
 					rootId: collectionGuid(),
 					subId: null,
 					workspaceGuid: nav ? nav.workspaceGuid : null,
-					state: { openViewId: viewId },
+					state,
 				});
+				ui.setActivePanel(target);
 			};
+
+			const openViewEditor = (viewId) => openSettings({ openViewId: viewId });
+			const openAddView = () => openSettings({ openAddView: true });
 
 			// --- data ----------------------------------------------------------
 
@@ -371,30 +400,60 @@ export class Plugin extends CollectionPlugin {
 			 * Appended to the view root rather than to the trigger: the tab row copies
 			 * native's overflow:hidden, which would clip a menu nested inside it.
 			 */
-			const showMenu = (items, x, y) => {
+			const showMenu = (items, x, y, filterPlaceholder) => {
 				closeMenu();
 				if (!$root) return;
 				$menu = document.createElement('div');
 				$menu.className = 'outline-menu';
-				items.forEach(item => {
-					const $item = document.createElement('div');
-					$item.className = 'outline-menu-item';
-					if (item.active) $item.classList.add('is-active');
-					$item.appendChild(ui.createIcon(item.icon || 'ti-align-left'));
-					const $label = document.createElement('span');
-					$label.textContent = item.label;
-					$item.appendChild($label);
-					$item.addEventListener('click', (e) => {
+
+				const $items = document.createElement('div');
+				let $filter = null;
+
+				const paint = () => {
+					const needle = $filter ? $filter.value.trim().toLowerCase() : '';
+					$items.innerHTML = '';
+					items
+						.filter(item => !needle || item.label.toLowerCase().includes(needle))
+						.forEach(item => {
+							const $item = document.createElement('div');
+							$item.className = 'outline-menu-item';
+							if (item.active) $item.classList.add('is-active');
+							$item.appendChild(ui.createIcon(item.icon || 'ti-align-left'));
+							const $label = document.createElement('span');
+							$label.textContent = item.label;
+							$item.appendChild($label);
+							$item.addEventListener('click', (e) => {
+								e.stopPropagation();
+								closeMenu();
+								item.onSelect();
+							});
+							$items.appendChild($item);
+						});
+				};
+
+				if (filterPlaceholder) {
+					$menu.classList.add('has-filter');
+					$filter = document.createElement('input');
+					$filter.type = 'text';
+					$filter.spellcheck = false;
+					$filter.className = 'form-input outline-menu-filter';
+					$filter.placeholder = filterPlaceholder;
+					$filter.addEventListener('input', paint);
+					$filter.addEventListener('click', e => e.stopPropagation());
+					$filter.addEventListener('keydown', (e) => {
 						e.stopPropagation();
-						closeMenu();
-						item.onSelect();
+						if (e.key === 'Escape') closeMenu();
 					});
-					$menu.appendChild($item);
-				});
+					$menu.appendChild($filter);
+				}
+
+				$menu.appendChild($items);
+				paint();
 				$root.appendChild($menu);
 				const rootRect = $root.getBoundingClientRect();
 				$menu.style.left = `${x - rootRect.left}px`;
 				$menu.style.top = `${y - rootRect.top}px`;
+				if ($filter) $filter.focus();
 			};
 
 			/**
@@ -572,8 +631,15 @@ export class Plugin extends CollectionPlugin {
 			const ensureSortState = () => {
 				if (sortFieldId !== null) return;
 				const view = currentView();
-				sortFieldId = (view && view.sort_field_id) || '';
 				sortDir = (view && view.sort_dir) || 'asc';
+				sortFieldId = (view && view.sort_field_id) || '';
+				if (!sortFieldId) {
+					// An empty sort field means custom order, which this view has no
+					// way to set. Fall back to Title and actually apply it, so the
+					// toolbar never reports a sort the menu can't offer.
+					sortFieldId = 'title';
+					viewContext.setSortColumn(sortFieldId, sortDir);
+				}
 			};
 
 			const applySort = (fieldId, dir) => {
@@ -583,16 +649,35 @@ export class Plugin extends CollectionPlugin {
 				renderToolbar();
 			};
 
+			/**
+			 * Which fields the app offers as sort keys, from its own predicate:
+			 * active, not the `icon` field, and not a file/image/banner type; plus
+			 * `parent_page` always excluded and `collection` excluded outside a
+			 * dynamic collection.
+			 *
+			 * The app also offers "Custom Order" (the empty field id), which sorts on
+			 * a per-view drag position stored at record.j["$o:<viewId>"]. This view
+			 * has no drag-reorder, so no record ever gets an "$o:outline" key and it
+			 * would only ever mean creation order — it is deliberately not offered.
+			 */
+			const SORT_SKIP_IDS = ['icon', 'parent_page', 'collection'];
+			const SORT_SKIP_TYPES = ['file', 'image', 'banner'];
+			const sortableFields = () => (plugin.getConfiguration().fields || []).filter(f =>
+				f.active !== false
+				&& !SORT_SKIP_IDS.includes(f.id)
+				&& !SORT_SKIP_TYPES.includes(f.type));
+
 			const openSortMenu = ($anchor) => {
 				if ($menu) return closeMenu();
 				const rect = $anchor.getBoundingClientRect();
-				const sortable = (plugin.getConfiguration().fields || []).filter(f => f.type !== 'banner');
-				showMenu(sortable.map(field => ({
+				const items = [];
+				sortableFields().forEach(field => items.push({
 					label: field.label,
-					icon: field.icon,
+					icon: field.icon || 'ti-align-left',
 					active: field.id === sortFieldId,
 					onSelect: () => applySort(field.id, sortDir),
-				})), rect.left, rect.bottom + 2);
+				}));
+				showMenu(items, rect.left, rect.bottom + 2, 'Sort by property...');
 			};
 
 			const openTabMenu = ($tab, view, e) => {
@@ -638,7 +723,7 @@ export class Plugin extends CollectionPlugin {
 					});
 					$views.appendChild($tab);
 				});
-				$views.appendChild(toolbarButton('ti-plus', 'Add view', openCollectionSettings));
+				$views.appendChild(toolbarButton('ti-plus', 'Add view', openAddView));
 				$toolbar.appendChild($views);
 
 				const $actions = document.createElement('div');
@@ -655,7 +740,7 @@ export class Plugin extends CollectionPlugin {
 
 				$actions.appendChild(toolbarButton('ti-adjustments', 'Configure view', () => {
 					if (activeId) openViewEditor(activeId);
-					else openCollectionSettings();
+					else openAddView();
 				}));
 
 				const $sortWrap = document.createElement('span');
@@ -992,6 +1077,14 @@ export class Plugin extends CollectionPlugin {
 							border: 1px solid var(--cmdpal-border-color);
 							border-radius: var(--radius-normal);
 							box-shadow: var(--cmdpal-box-shadow);
+						}
+						.outline-menu.has-filter {
+							min-width: 250px;
+						}
+						.outline-menu-filter {
+							width: 100%;
+							margin-bottom: 4px;
+							background: transparent;
 						}
 						.outline-menu-item {
 							display: flex;
