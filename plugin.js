@@ -121,6 +121,10 @@ export class Plugin extends CollectionPlugin {
 			let $menu = null;
 			/** id of the side panel opened by Space-to-peek, if any */
 			let peekPanelId = null;
+			/** E-mode: {guid, index} — the row whose property list is open, and the highlighted field */
+			let propMode = null;
+			/** guid of a just-created record whose name opens for editing on the next render */
+			let pendingNameEditGuid = null;
 			/**
 			 * setSortColumn() only sets the view's runtime sort — it never writes back
 			 * to sort_field_id in the config — so the current sort is tracked here,
@@ -437,9 +441,18 @@ export class Plugin extends CollectionPlugin {
 			const DEPTH_STEP = 20;
 			const ICON_OFFSET = ROW_PAD_X + TWISTY_W + ROW_GAP;
 
+			/**
+			 * Native drops a new card into the list with its title in edit mode
+			 * rather than navigating away, so this does the same: createRecord()
+			 * fires onRefresh, and renderRows() picks the guid up from here.
+			 */
 			const createRecord = () => {
 				const guid = viewContext.createRecord();
-				if (guid) viewContext.openRecordInThisPanel(guid);
+				if (!guid) return;
+				pendingNameEditGuid = guid;
+				// If the refresh already ran (or never comes), render once more so the
+				// guid above is picked up rather than sitting there forever.
+				setTimeout(() => { if (pendingNameEditGuid) renderRows(); }, 150);
 			};
 
 			// --- toolbar -------------------------------------------------------
@@ -686,6 +699,267 @@ export class Plugin extends CollectionPlugin {
 				$toolbar.appendChild($actions);
 			};
 
+			// --- inline editing --------------------------------------------------
+
+			/**
+			 * The fields E-mode walks: Title first (native puts the title at the top
+			 * of a card's property list too), then the properties the row already
+			 * shows as chips, minus the types there is no editor for.
+			 */
+			const EDITABLE_TYPES = ['text', 'number', 'choice', 'record'];
+			const EDIT_SKIP_IDS = ['title', 'icon', 'collection', 'parent_page'];
+			const editableFields = () => {
+				const canEdit = f => f && f.active !== false && !f.read_only
+					&& EDITABLE_TYPES.includes(f.type) && !EDIT_SKIP_IDS.includes(f.id);
+				// The fields the row already shows come first, then everything else
+				// the collection has. Native property mode walks only the card's shown
+				// properties, but the field that shapes the tree (Parent) is usually
+				// NOT one of them, and not being able to reparent from here would miss
+				// the point of editing on an outline.
+				const shown = visibleFields().filter(canEdit);
+				const rest = (plugin.getConfiguration().fields || [])
+					.filter(f => canEdit(f) && !shown.some(s => s.id === f.id));
+				const title = fieldsById()['title'];
+				return title ? [title, ...shown, ...rest] : [...shown, ...rest];
+			};
+
+			/** Title is a field like any other here, but its value comes off the record. */
+			const fieldText = (record, field) => {
+				if (field.id === 'title') return record.getName() || '';
+				const value = propValue(record, field);
+				return value ? value.text : '';
+			};
+
+			/**
+			 * A write is not readable in the same tick, and the refresh that follows
+			 * arrives on its own schedule — re-render once it has landed.
+			 */
+			const afterWrite = () => setTimeout(() => renderRows(), 60);
+
+			/**
+			 * Swap an element for a text input. Enter and blur commit, Escape cancels.
+			 * The input stops its own keys from bubbling: the view's key hook would
+			 * otherwise read them as row navigation while the caret sits here.
+			 */
+			const editText = ($cell, value, { onCommit, onCancel }) => {
+				const $input = document.createElement('input');
+				$input.type = 'text';
+				$input.className = 'outline-inline-input';
+				$input.value = value || '';
+				let done = false;
+				const finish = (commit) => {
+					if (done) return;
+					done = true;
+					if (commit) onCommit($input.value.trim());
+					else if (onCancel) onCancel();
+				};
+				$input.addEventListener('keydown', (e) => {
+					e.stopPropagation();
+					if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+					else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+				});
+				$input.addEventListener('blur', () => finish(true));
+				$input.addEventListener('mouseup', e => e.stopPropagation());
+				$cell.replaceWith($input);
+				$input.focus();
+				$input.select();
+			};
+
+			/**
+			 * Edit a row's name in place. `isNew` marks a row that came from the
+			 * create button: leaving it without a name discards the record, the way
+			 * native cancels an untouched new card.
+			 */
+			const startNameEdit = (node, isNew) => {
+				if (!$list) return;
+				const $row = $list.querySelector(`.outline-row[data-guid="${node.id}"]`);
+				const $name = $row && $row.querySelector('.outline-name');
+				if (!$name) return;
+				const discardIfEmpty = (text) => {
+					if (isNew && !text) {
+						node.record.trash();
+						return true;
+					}
+					return false;
+				};
+				editText($name, node.record.getName(), {
+					onCommit: (text) => {
+						if (!discardIfEmpty(text)) node.record.prop('title').set(text);
+						focusView();
+						afterWrite();
+					},
+					onCancel: () => {
+						discardIfEmpty('');
+						focusView();
+						afterWrite();
+					},
+				});
+			};
+
+			/** Descendants of a node, so the Parent picker can't offer a cycle. */
+			const descendantsOf = (node) => {
+				const out = new Set();
+				const visit = n => n.children.forEach(child => {
+					out.add(child.id);
+					visit(child);
+				});
+				visit(node);
+				return out;
+			};
+
+			/**
+			 * Candidates for a record-link field. A field pointing back at this
+			 * collection (`filter_colguid`) is answered from the records already
+			 * loaded; anything else has to be fetched from that collection.
+			 */
+			const recordCandidates = async (field, node) => {
+				if (!field.filter_colguid || field.filter_colguid === collectionGuid()) {
+					const banned = descendantsOf(node);
+					return [...hierarchy.nodes.values()]
+						.filter(n => n.id !== node.id && !banned.has(n.id))
+						.map(n => ({ guid: n.id, name: n.name }));
+				}
+				const other = plugin.data.getPluginByGuid(field.filter_colguid);
+				if (!other || !other.getAllRecords) return [];
+				const records = await other.getAllRecords();
+				return records.map(r => ({ guid: r.guid, name: r.getName() || 'Unknown' }));
+			};
+
+			/** Open the editor for one field of one row, anchored at its value cell. */
+			const editField = (node, field, $cell) => {
+				const record = node.record;
+				const prop = () => record.prop(field.id);
+
+				if (field.id === 'title' || field.type === 'text' || field.type === 'number') {
+					editText($cell, fieldText(record, field), {
+						onCommit: (text) => {
+							if (field.type === 'number') {
+								prop().set(text === '' ? null : Number(text));
+							} else {
+								prop().set(text);
+							}
+							focusView();
+							afterWrite();
+						},
+						onCancel: () => { focusView(); renderRows(); },
+					});
+					return;
+				}
+
+				const rect = $cell.getBoundingClientRect();
+				const icon = field.icon || 'ti-align-left';
+
+				if (field.type === 'choice') {
+					const current = prop().choiceLabel();
+					const items = (field.choices || [])
+						.filter(c => c.active !== false)
+						.map(c => ({
+							label: c.label,
+							icon: c.icon || icon,
+							active: c.label === current,
+							onSelect: () => { prop().setChoice(c.label); focusView(); afterWrite(); },
+						}));
+					items.push({
+						label: 'Clear', icon: 'ti-x',
+						onSelect: () => { prop().set(null); focusView(); afterWrite(); },
+					});
+					showMenu(items, rect.left, rect.bottom + 2, `${field.label}...`);
+					return;
+				}
+
+				if (field.type === 'record') {
+					const linked = record.linkedRecord(field.id);
+					recordCandidates(field, node).then(candidates => {
+						if (viewContext.isDestroyed()) return;
+						const items = [{
+							label: 'None', icon: 'ti-x',
+							active: !linked,
+							onSelect: () => { prop().set(null); focusView(); afterWrite(); },
+						}];
+						candidates.forEach(c => items.push({
+							label: c.name,
+							icon,
+							active: linked && linked.guid === c.guid,
+							onSelect: () => { prop().set(c.guid); focusView(); afterWrite(); },
+						}));
+						showMenu(items, rect.left, rect.bottom + 2, `${field.label}...`);
+					});
+				}
+			};
+
+			/** Start editing the selected field of the row E-mode is open on. */
+			const editSelectedField = () => {
+				if (!propMode || !$list) return;
+				const $row = $list.querySelector(`.outline-row[data-guid="${propMode.guid}"]`);
+				const current = rows.find(r => r.node.id === propMode.guid);
+				const fields = editableFields();
+				const field = fields[propMode.index];
+				if (!$row || !current || !field) return;
+				const $cell = $row.querySelector(`.outline-pe-row[data-index="${propMode.index}"] .outline-pe-value`);
+				if ($cell) editField(current.node, field, $cell);
+			};
+
+			const paintPropSelection = () => {
+				if (!$list) return;
+				$list.querySelectorAll('.outline-pe-row').forEach($r => {
+					$r.classList.toggle('is-selected', Number($r.dataset.index) === propMode.index);
+				});
+			};
+
+			const exitPropMode = () => {
+				propMode = null;
+				renderRows();
+				focusView();
+			};
+
+			/**
+			 * The property list E opens under a row: one line per editable field,
+			 * ↑/↓ to walk them and Enter to edit — the app's "property mode", except
+			 * that a custom view has to draw and drive it itself.
+			 */
+			const buildPropEditor = (node, indent) => {
+				const $panel = document.createElement('div');
+				$panel.className = 'outline-propedit';
+				$panel.style.paddingLeft = `${indent + TWISTY_W + ROW_GAP}px`;
+				// A click anywhere in here is the panel's own; the row underneath
+				// would otherwise take it as "open this record".
+				$panel.addEventListener('mouseup', e => e.stopPropagation());
+				const fields = editableFields();
+				if (propMode.index >= fields.length) propMode.index = 0;
+				fields.forEach((field, index) => {
+					const $prow = document.createElement('div');
+					$prow.className = 'outline-pe-row';
+					$prow.dataset.index = String(index);
+					if (index === propMode.index) $prow.classList.add('is-selected');
+
+					const $icon = ui.createIcon(field.icon || 'ti-align-left');
+					$icon.classList.add('outline-pe-icon');
+					$prow.appendChild($icon);
+
+					const $label = document.createElement('span');
+					$label.className = 'outline-pe-label';
+					$label.textContent = field.label;
+					$prow.appendChild($label);
+
+					const $value = document.createElement('span');
+					$value.className = 'outline-pe-value';
+					const text = fieldText(node.record, field);
+					$value.textContent = text || 'Empty';
+					if (!text) $value.classList.add('is-empty');
+					$prow.appendChild($value);
+
+					$prow.addEventListener('mouseup', (e) => {
+						e.stopPropagation();
+						if (e.button !== 0) return;
+						propMode.index = index;
+						paintPropSelection();
+						editField(node, field, $value);
+					});
+					$panel.appendChild($prow);
+				});
+				return $panel;
+			};
+
 			// --- rows ----------------------------------------------------------
 
 			/** One property chip: the field's own icon plus its value. */
@@ -801,6 +1075,10 @@ export class Plugin extends CollectionPlugin {
 
 					$row.appendChild($title);
 
+					if (propMode && propMode.guid === node.id) {
+						$row.appendChild(buildPropEditor(node, indent));
+					}
+
 					// Native list cards act on mouseup, not click, so middle-click is
 					// caught too: shift = focus only, middle or cmd/ctrl = other panel,
 					// plain left = this panel.
@@ -825,6 +1103,17 @@ export class Plugin extends CollectionPlugin {
 
 				restack();
 				setSelection(selectedIndex);
+
+				// A record created from the toolbar, the create card or Shift+Enter
+				// shows up here on the refresh that followed; open its name.
+				if (pendingNameEditGuid) {
+					const at = rows.findIndex(r => r.node.id === pendingNameEditGuid);
+					pendingNameEditGuid = null;
+					if (at !== -1) {
+						setSelection(at);
+						startNameEdit(rows[at].node, true);
+					}
+				}
 			};
 
 			/** Build the chrome once; renderRows() then only swaps out the list body. */
@@ -1169,6 +1458,67 @@ export class Plugin extends CollectionPlugin {
 							margin-left: 3px;
 							opacity: 0.7;
 						}
+						/* the property list E opens under a row */
+						.outline-propedit {
+							display: flex;
+							flex-direction: column;
+							gap: 1px;
+							margin-top: 4px;
+							padding-bottom: 2px;
+						}
+						.outline-pe-row {
+							display: flex;
+							align-items: center;
+							gap: 6px;
+							padding: 3px 6px;
+							border-radius: var(--radius-normal);
+							font-size: var(--text-size-small);
+							cursor: pointer;
+						}
+						.outline-pe-row:hover {
+							background: var(--prop-bg-hover);
+						}
+						.outline-pe-row.is-selected {
+							background: var(--cmdpal-selected-bg-color);
+							color: var(--cmdpal-selected-fg-color);
+						}
+						.outline-pe-icon {
+							color: var(--text-xmuted);
+							flex: 0 0 auto;
+						}
+						.outline-pe-label {
+							flex: 0 0 140px;
+							color: var(--text-muted);
+							white-space: nowrap;
+							overflow: hidden;
+							text-overflow: ellipsis;
+						}
+						.outline-pe-row.is-selected .outline-pe-label {
+							color: inherit;
+						}
+						.outline-pe-value {
+							flex: 1 1 auto;
+							min-width: 0;
+							white-space: nowrap;
+							overflow: hidden;
+							text-overflow: ellipsis;
+						}
+						.outline-pe-value.is-empty {
+							color: var(--text-xmuted);
+						}
+						.outline-inline-input {
+							flex: 1 1 auto;
+							min-width: 0;
+							padding: 1px 4px;
+							border: var(--input-border-focus);
+							border-radius: 3px;
+							background: var(--panel-bg-color);
+							color: var(--text-default);
+							font-family: var(--font-sans);
+							font-size: inherit;
+							font-weight: inherit;
+							outline: none;
+						}
 						.outline-empty {
 							padding: 40px;
 							text-align: center;
@@ -1194,6 +1544,8 @@ export class Plugin extends CollectionPlugin {
 				onDestroy: () => {
 					closeMenu();
 					hidePeek();
+					propMode = null;
+					pendingNameEditGuid = null;
 					hierarchy = null;
 					rows = [];
 					$root = null;
@@ -1219,8 +1571,11 @@ export class Plugin extends CollectionPlugin {
 					const $focused = document.activeElement;
 					if ($focused && $focused !== document.body
 						&& $root && !$root.contains($focused)) return;
-					// The search box handles its own keys via its keydown listener.
+					// The search box handles its own keys via its keydown listener,
+					// and so does an open inline editor.
 					if ($search && document.activeElement === $search) return;
+					if ($focused && $focused.classList
+						&& $focused.classList.contains('outline-inline-input')) return;
 
 					// While a toolbar button holds focus, the arrows belong to the
 					// toolbar, not the rows. The chain going down is
@@ -1262,6 +1617,44 @@ export class Plugin extends CollectionPlugin {
 					if (rows.length === 0) return;
 					const current = rows[selectedIndex];
 					if (!current) return;
+
+					// Property mode owns the keyboard while it is open: ↑/↓ walk the
+					// row's fields, Enter edits the highlighted one, Escape (or E
+					// again) leaves. Everything else is swallowed rather than falling
+					// through to row navigation, which would scroll the list out from
+					// under the open property list.
+					if (propMode) {
+						const fields = editableFields();
+						if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+							e.preventDefault();
+							const step = e.key === 'ArrowDown' ? 1 : -1;
+							propMode.index = (propMode.index + step + fields.length) % fields.length;
+							paintPropSelection();
+							return;
+						}
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							editSelectedField();
+							return;
+						}
+						if (e.key === 'Escape' || e.key === 'e' || e.key === 'E') {
+							e.preventDefault();
+							exitPropMode();
+							return;
+						}
+						return;
+					}
+
+					// E opens the focused row's properties, as it does on a native card.
+					if ((e.key === 'e' || e.key === 'E')
+						&& !e.metaKey && !e.ctrlKey && !e.altKey) {
+						e.preventDefault();
+						if (editableFields().length) {
+							propMode = { guid: current.node.id, index: 0 };
+							renderRows();
+						}
+						return;
+					}
 
 					if (e.key === 'Enter' && e.shiftKey) {
 						e.preventDefault();
