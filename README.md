@@ -54,15 +54,64 @@ bin/thymercli plugin show Organizations -w W3TZX0YZ4FRCMSHGB976K32N4D --json | j
 - **Rows adapt** between one and two lines: chips sit inline after the name
   when they fit, and drop to a second line (indented under the row icon, with
   the timestamp held on line 1) when they don't. See `restack()` below.
-- **Rebuilt toolbar** (custom views get none — see below): view tabs, Add view,
-  New <item>, Configure view, sort field, sort direction. Right-clicking a tab
-  gives Rename View / Edit View, mirroring the app's own context menu.
+- **Rebuilt toolbar** (custom views get none — see below): view tabs, New
+  <item>, sort field, sort direction. View management — add, rename, configure —
+  is left to the app's own collection-settings screen.
 - **Sort menu** offers the same fields the app does, from its own predicate (see
   below). It does *not* offer Custom Order — that sorts on a per-view drag
   position this view has no way to write, so it could only ever mean creation
   order. A view left with no sort field falls back to Title.
-- **Keyboard**: ↑/↓ move, → expand or descend, ← collapse or go to parent,
-  Home/End, Enter opens, Shift+Enter creates.
+- **Peek** on Space: opens the focused record in the side panel, follows the
+  selection as you keep arrowing, and a second Space closes that panel.
+- **Keys and mouse follow the native list view**, read out of the bundle rather
+  than guessed — see the table below for what matches and what can't.
+
+## Native list-view keys and mouse, and what this view does
+
+The app's card views handle keys in `onKeyboardNavigation` (a shared cards base
+plus a list-view override) and mouse in `mouseup`/`dblclick` delegates on
+`this.cardSelector()`. Both were read out of the bundle. `Wi(e)` normalizes an
+event into a string like `"Shift+Enter"`, so anything not in those switches
+falls through untouched.
+
+| input | native list view | here |
+|---|---|---|
+| ↓ / Tab | next card; wraps past the last via `(r % len + len) % len` | same |
+| ↑ | previous card; from the **first** row it focuses the search box instead of wrapping | same |
+| Shift+Tab | *unhandled* — falls through, no `preventDefault` | same (left to the browser) |
+| ← / → | move by one grid column, so a no-op in a 1-column list | collapse / expand, or step to parent / first child |
+| Home / End | first / last card | same |
+| Enter | open focused record in this panel | same |
+| ⌘/Ctrl+Enter | open aside (other panel) | same |
+| Shift+Enter | create a card below | create (position not controllable) |
+| Alt+Enter | create a card above | — no SDK call for positioned create |
+| Space | peek — put the record in the side panel; Space again closes it | same |
+| Escape | exit peek, or cancel an untouched new card | closes the peek panel |
+| `/` | focus the collection search box | same |
+| M | move mode — keyboard drag-reorder, refused while sorted | — no SDK write for the per-view `$o:<viewId>` order key |
+| E | property mode — ↑/↓ through a card's properties, Enter edits | — no SDK inline property editor |
+| trash shortcut | trash the focused record | — not implemented |
+| left click | focus the card, then open in this panel | same |
+| Shift+click | focus only, no open | same |
+| ⌘/Ctrl+click, middle click | open aside | same |
+| double click | open in this panel | same (single click already opens) |
+| click a property row or the title | focus that field for inline editing | opens the linked record for `record` chips; other types are inert |
+| drag | reorder (writes custom order) | — not implemented |
+
+Two details worth keeping in mind: native acts on **`mouseup`**, not `click`,
+which is how it catches middle-click at all; and the search box is part of the
+navigation loop in both directions — ↓ from the box focuses the **first** row
+(`focusFromCollectionSearch`), not the row after the current one.
+
+**Peek is rebuilt from panel calls.** Native peek is a panel navigation preview
+— `previewItemWithHighlight()`, `hasNavigationPreview()`,
+`dismissNavigationPreview()`, `commitNavigationPreview(true)` — all on the panel
+component, none of them on the SDK's `PluginPanel`. The same behavior comes out
+of `openRecordInOtherPanel()` plus `ui.closePanel()`: Space opens the record
+aside and remembers that panel's id, moving the selection re-opens into it,
+Space or Escape closes it, and Enter (or ⌘/Ctrl+Enter) *commits* by forgetting
+the id so the panel simply stays. The id is re-resolved through
+`ui.getPanels()` on each use, since the user may have closed it in the meantime.
 
 ## Things the app does that aren't in the SDK docs
 
@@ -111,20 +160,18 @@ separate class and does not have it. Take the guid from the panel's own
 takes down the entire view with no error in the UI, so keep that scope to
 declarations.
 
-**Navigation shapes** the app uses, both reachable via `panel.navigateTo()`:
+**Navigation shape** for the view tabs, via `panel.navigateTo()` — this is what
+the native switcher does:
 
 ```js
-// switch view (this is what the native switcher does)
 { workspaceGuid, type: 'overview', rootId: collectionGuid, subId: viewId }
-
-// "Edit View..." — collection settings scoped to one view
-{ workspaceGuid, type: 'collection_settings', rootId: collectionGuid, subId: null,
-  state: { openViewId: viewId } }
 ```
 
-`collection_settings` is a real nav type in the app's enum but is not in the
-SDK types, so treat it as liable to change. `{ openAddView: true }` is what the
-toolbar's `+` passes.
+The app also reaches collection settings with
+`{ type: 'collection_settings', rootId: collectionGuid, subId: null, state }`,
+where `state` is `{ openViewId }` for "Edit View..." or `{ openAddView: true }`
+for the toolbar's `+`. This view no longer navigates there — see the panel note
+below for why driving that screen from a plugin is awkward.
 
 **Which fields the app offers as sort keys** — its predicate, not the schema:
 
@@ -141,7 +188,8 @@ and independent per view. A record without one falls back to a key derived from
 its creation time, which is why an untouched view in Custom Order looks like
 creation order.
 
-**Do not `ui.createPanel()` for collection settings.** Dismissing settings runs:
+**Driving collection settings from a plugin is awkward.** Dismissing settings
+runs:
 
 ```js
 function P5(o){
@@ -152,16 +200,14 @@ function P5(o){
 ```
 
 It only closes the panel when `navigateBack()` *fails*. A panel from
-`createPanel()` arrives with its own placeholder already in history, so back
-succeeds and you are left with an empty stray panel. There is no SDK option to
+`ui.createPanel()` arrives with its own placeholder already in history, so back
+succeeds and you are left with an empty stray panel — and there is no SDK way to
 create a panel without that history entry (`createPanel` takes only
 `afterPanel`, `navigateTo` has no replace flag, `PluginPanel` has no history
-API), and no reliable signal to clean it up afterwards — `panel.navigated` is
-`panel/navigateComplete`, emitted per panel-body component, and the placeholder
-does not appear to emit it. Four attempts at detect-and-close all failed. This
-view reuses an existing panel or its own instead, which cannot orphan anything.
-No plugin in the 79 vendored community examples solves this either; they only
-close panels from their own buttons, where they own the trigger.
+API) and no reliable signal to clean it up afterwards. Navigating the view's own
+panel works, but then settings replaces the view. Community plugins only close
+panels from their own buttons, where they own the trigger. Hence: no settings
+navigation here at all.
 
 **Choice colors.** `color` on a choice is an index into the bundle's palette
 array (`At`), whose `className` values feed `.enum-color-*` and the
@@ -177,9 +223,8 @@ different and produces wrong colors.
 
 **The app's own CSS classes work inside a custom view.** Plugin view DOM lives
 in the app document, so `.button-primary`, `.kbd`, `.form-input`,
-`.collection-list-create-card`, `.input-widget` etc. all apply. The rename
-prompt and the create row reuse the app's markup verbatim rather than
-approximating it. The `--list-*` metrics are scoped to `.collection-list-view`,
+`.collection-list-create-card`, `.input-widget` etc. all apply. The create row
+reuses the app's markup verbatim rather than approximating it. The `--list-*` metrics are scoped to `.collection-list-view`,
 so the root carries that class to pick them up (the class itself is only
 `width:100%; position:relative`).
 
@@ -204,7 +249,3 @@ cursor; menus here do the same against `.outline-root`.
   Without it those records are unreachable from any root and vanish silently.
 - Sibling order is whatever the app hands over, so the view's sort actually
   applies. Don't re-sort inside `buildHierarchy()`.
-- Renaming a view calls `saveConfiguration()`, which reloads the plugin and
-  flickers the UI. Fine for a deliberate action, not for anything frequent.
-- The icon picker enumerates `.ti-*` rules out of `document.styleSheets` at
-  runtime rather than embedding a list, so it tracks whatever the app ships.

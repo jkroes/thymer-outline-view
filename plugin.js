@@ -119,6 +119,8 @@ export class Plugin extends CollectionPlugin {
 			let $search = null;
 			let $toolbar = null;
 			let $menu = null;
+			/** id of the side panel opened by Space-to-peek, if any */
+			let peekPanelId = null;
 			/**
 			 * setSortColumn() only sets the view's runtime sort — it never writes back
 			 * to sort_field_id in the config — so the current sort is tracked here,
@@ -179,53 +181,6 @@ export class Plugin extends CollectionPlugin {
 			};
 
 			const navigateToView = (viewId) => navigate('overview', viewId);
-
-			/**
-			 * Where collection settings should land. The app reuses a settings panel
-			 * already open on this collection, and otherwise puts it somewhere other
-			 * than the panel you clicked from — so the view stays on screen.
-			 */
-			/**
-			 * Where collection settings should land. Reuse a settings panel already
-			 * open on this collection, else any other non-sidebar panel, else our own.
-			 *
-			 * Deliberately never ui.createPanel(): dismissing settings runs
-			 * `navigateBack() || closePanel()`, and a created panel arrives with its
-			 * own placeholder already in history, so back succeeds and it is left
-			 * open and empty. There is no SDK way to create a panel without that
-			 * history, and no reliable signal for cleaning it up afterwards.
-			 */
-			const settingsPanel = (self) => {
-				const panels = ui.getPanels().filter(p => !p.isSidebar());
-				const alreadyOpen = panels.find(p => {
-					const nav = p.getNavigation();
-					return nav && nav.type === 'collection_settings' && nav.rootId === collectionGuid();
-				});
-				if (alreadyOpen) return alreadyOpen;
-				return panels.find(p => p.getId() !== self.getId()) || self;
-			};
-
-			/**
-			 * Collection settings, optionally scoped: { openViewId } is what the app's
-			 * "Edit View..." passes, { openAddView: true } is what its "+" passes.
-			 */
-			const openSettings = (state) => {
-				const panel = ownPanel();
-				if (!panel) return;
-				const nav = panel.getNavigation();
-				const target = settingsPanel(panel);
-				target.navigateTo({
-					type: 'collection_settings',
-					rootId: collectionGuid(),
-					subId: null,
-					workspaceGuid: nav ? nav.workspaceGuid : null,
-					state,
-				});
-				ui.setActivePanel(target);
-			};
-
-			const openViewEditor = (viewId) => openSettings({ openViewId: viewId });
-			const openAddView = () => openSettings({ openAddView: true });
 
 			// --- data ----------------------------------------------------------
 
@@ -311,6 +266,12 @@ export class Plugin extends CollectionPlugin {
 				});
 				const $selected = $list.querySelector(`.outline-row[data-index="${selectedIndex}"]`);
 				if ($selected) $selected.scrollIntoView({ block: 'nearest' });
+				// Native peek follows the focused card as you keep browsing — but only
+				// while the peek panel is still open. The user may have closed it.
+				if (peekPanelId) {
+					if (peekPanel()) showPeek();
+					else peekPanelId = null;
+				}
 			};
 
 			const toggle = (node) => {
@@ -348,9 +309,89 @@ export class Plugin extends CollectionPlugin {
 				});
 			};
 
-			const openSelected = () => {
+			/**
+			 * Step the selection, wrapping at the ends. The app's getNextCardGuid()
+			 * does the same: an out-of-range index falls through to
+			 * `(r % len + len) % len`. (Only the very first row is special-cased,
+			 * and its ArrowUp goes to the search box instead of wrapping.)
+			 */
+			const selectNext = (delta) => {
+				if (!rows.length) return;
+				setSelection((selectedIndex + delta + rows.length) % rows.length);
+			};
+
+			const openSelected = (otherPanel) => {
 				const current = rows[selectedIndex];
-				if (current) viewContext.openRecordInThisPanel(current.node.id);
+				if (!current) return;
+				if (otherPanel) viewContext.openRecordInOtherPanel(current.node.id);
+				else viewContext.openRecordInThisPanel(current.node.id);
+			};
+
+			// --- peek ------------------------------------------------------------
+
+			/**
+			 * Space-to-peek: open the focused record in the side panel, and let a
+			 * second Space close that panel again. The app calls this a navigation
+			 * preview; while it is up, arrows keep browsing and the side panel follows.
+			 */
+
+			/** Pull DOM focus back into the view root so key hooks fire here again. */
+			const focusView = () => {
+				if (!$root) return;
+				$root.tabIndex = -1;
+				$root.focus({ preventScroll: true });
+			};
+
+			/** The peek panel, re-resolved each time — panel objects don't outlive much. */
+			const peekPanel = () => {
+				if (!peekPanelId) return null;
+				return ui.getPanels().find(p => p.getId() === peekPanelId) || null;
+			};
+
+			const hidePeek = () => {
+				const panel = peekPanel();
+				peekPanelId = null;
+				if (panel) ui.closePanel(panel);
+			};
+
+			/** Leave the panel open but stop treating it as a peek (native's commit). */
+			const commitPeek = () => {
+				peekPanelId = null;
+			};
+
+			const showPeek = () => {
+				const current = rows[selectedIndex];
+				if (!current) return;
+				const self = ownPanel();
+				const before = new Set(ui.getPanels().map(p => p.getId()));
+				viewContext.openRecordInOtherPanel(current.node.id);
+				// Opening aside hands focus to that panel's editor. The app only calls
+				// a custom view's onKeyboardNavigation when its own component has focus
+				// (`onKeyDown(e){ let t=Ze(); t && (t==this._() || t==this) &&
+				// this.onKeyboardNavigation(e) }`), and the editor swallows Space as
+				// text besides. Native peek keeps the list focused, so take focus back.
+				// The aside renders asynchronously and focuses its editor afterwards,
+				// so a synchronous grab alone loses the race — re-assert once the
+				// panel has painted.
+				const takeFocusBack = () => {
+					if (self) ui.setActivePanel(self);
+					focusView();
+				};
+				takeFocusBack();
+				requestAnimationFrame(takeFocusBack);
+				setTimeout(takeFocusBack, 120);
+				if (peekPanelId) return;
+				// Whichever panel is new is the peek; if the app reused an existing one,
+				// take the other non-sidebar panel.
+				const panels = ui.getPanels().filter(p => !p.isSidebar());
+				const opened = panels.find(p => !before.has(p.getId()))
+					|| panels.find(p => !self || p.getId() !== self.getId());
+				peekPanelId = opened ? opened.getId() : null;
+			};
+
+			const togglePeek = () => {
+				if (peekPanelId) hidePeek();
+				else showPeek();
 			};
 
 			/**
@@ -388,10 +429,20 @@ export class Plugin extends CollectionPlugin {
 				return $btn;
 			};
 
+			/**
+			 * Dismisses the open menu on any click outside it, like the app's own
+			 * dropdowns. Registered on the document because clicks land all over the
+			 * panel, not just inside the view root.
+			 */
+			const onDocumentClick = (e) => {
+				if ($menu && !$menu.contains(e.target)) closeMenu();
+			};
+
 			const closeMenu = () => {
 				if ($menu) {
 					$menu.remove();
 					$menu = null;
+					document.removeEventListener('click', onDocumentClick, true);
 				}
 			};
 
@@ -399,6 +450,11 @@ export class Plugin extends CollectionPlugin {
 			 * items: [{label, icon, active, onSelect}], positioned at viewport (x, y).
 			 * Appended to the view root rather than to the trigger: the tab row copies
 			 * native's overflow:hidden, which would clip a menu nested inside it.
+			 *
+			 * Keys follow the app's own dropdown: ↑/↓ move the highlight and wrap,
+			 * Enter confirms, Escape closes, Tab does nothing. `active` marks the
+			 * current value, which is separate from the keyboard highlight — the app
+			 * draws them as `autocomplete--current` and `autocomplete--option-selected`.
 			 */
 			const showMenu = (items, x, y, filterPlaceholder) => {
 				closeMenu();
@@ -408,28 +464,58 @@ export class Plugin extends CollectionPlugin {
 
 				const $items = document.createElement('div');
 				let $filter = null;
+				/** items surviving the filter, and the highlighted one within them */
+				let shown = items;
+				let cursor = 0;
+
+				const confirm = (index) => {
+					const item = shown[index];
+					if (!item) return;
+					closeMenu();
+					item.onSelect();
+				};
+
+				const move = (delta) => {
+					if (!shown.length) return;
+					cursor = (cursor + delta + shown.length) % shown.length;
+					paint();
+					const $sel = $items.querySelector('.is-selected');
+					if ($sel) $sel.scrollIntoView({ block: 'nearest' });
+				};
 
 				const paint = () => {
 					const needle = $filter ? $filter.value.trim().toLowerCase() : '';
+					shown = items.filter(item => !needle || item.label.toLowerCase().includes(needle));
+					if (cursor >= shown.length) cursor = 0;
 					$items.innerHTML = '';
-					items
-						.filter(item => !needle || item.label.toLowerCase().includes(needle))
-						.forEach(item => {
-							const $item = document.createElement('div');
-							$item.className = 'outline-menu-item';
-							if (item.active) $item.classList.add('is-active');
-							$item.appendChild(ui.createIcon(item.icon || 'ti-align-left'));
-							const $label = document.createElement('span');
-							$label.textContent = item.label;
-							$item.appendChild($label);
-							$item.addEventListener('click', (e) => {
-								e.stopPropagation();
-								closeMenu();
-								item.onSelect();
-							});
-							$items.appendChild($item);
+					shown.forEach((item, index) => {
+						const $item = document.createElement('div');
+						$item.className = 'outline-menu-item';
+						if (item.active) $item.classList.add('is-active');
+						if (index === cursor) $item.classList.add('is-selected');
+						$item.appendChild(ui.createIcon(item.icon || 'ti-align-left'));
+						const $label = document.createElement('span');
+						$label.textContent = item.label;
+						$item.appendChild($label);
+						$item.addEventListener('click', (e) => {
+							e.stopPropagation();
+							confirm(index);
 						});
+						$items.appendChild($item);
+					});
 				};
+
+				const onMenuKeyDown = (e) => {
+					e.stopPropagation();
+					switch (e.key) {
+						case 'ArrowDown': e.preventDefault(); move(1); break;
+						case 'ArrowUp': e.preventDefault(); move(-1); break;
+						case 'Enter': e.preventDefault(); confirm(cursor); break;
+						case 'Escape': e.preventDefault(); closeMenu(); break;
+						case 'Tab': e.preventDefault(); break;
+					}
+				};
+				$menu.addEventListener('keydown', onMenuKeyDown);
 
 				if (filterPlaceholder) {
 					$menu.classList.add('has-filter');
@@ -438,194 +524,32 @@ export class Plugin extends CollectionPlugin {
 					$filter.spellcheck = false;
 					$filter.className = 'form-input outline-menu-filter';
 					$filter.placeholder = filterPlaceholder;
-					$filter.addEventListener('input', paint);
+					$filter.addEventListener('input', () => { cursor = 0; paint(); });
 					$filter.addEventListener('click', e => e.stopPropagation());
-					$filter.addEventListener('keydown', (e) => {
-						e.stopPropagation();
-						if (e.key === 'Escape') closeMenu();
-					});
 					$menu.appendChild($filter);
 				}
 
 				$menu.appendChild($items);
 				paint();
 				$root.appendChild($menu);
+				// Clamp to the root's box: a menu opened near the right edge would
+				// otherwise widen the panel's scroll area and shove the view sideways.
 				const rootRect = $root.getBoundingClientRect();
-				$menu.style.left = `${x - rootRect.left}px`;
+				const menuW = $menu.offsetWidth;
+				const left = Math.max(0, Math.min(x - rootRect.left, rootRect.width - menuW));
+				$menu.style.left = `${left}px`;
 				$menu.style.top = `${y - rootRect.top}px`;
-				if ($filter) $filter.focus();
-			};
-
-			/**
-			 * Tabler icon names, read from the app's own stylesheet so the picker
-			 * stays in step with whatever the build ships.
-			 */
-			let iconNames = null;
-			const allIconNames = () => {
-				if (iconNames) return iconNames;
-				const found = new Set();
-				for (const sheet of Array.from(document.styleSheets)) {
-					let rules;
-					try {
-						rules = sheet.cssRules;
-					} catch (err) {
-						continue; // cross-origin sheet
-					}
-					for (const rule of Array.from(rules || [])) {
-						const sel = rule.selectorText;
-						if (!sel) continue;
-						const hits = sel.match(/\.ti-[a-z0-9-]+:+before/g);
-						if (hits) hits.forEach(h => found.add(h.slice(1).split(':')[0]));
-					}
+				// Capture, so a click on the trigger closes this menu before the
+				// trigger's own handler opens a fresh one — clicking the button again
+				// re-renders rather than toggling off.
+				document.addEventListener('click', onDocumentClick, true);
+				// Something inside the menu must hold focus, or its keydown never fires.
+				if ($filter) {
+					$filter.focus();
+				} else {
+					$menu.tabIndex = -1;
+					$menu.focus();
 				}
-				iconNames = Array.from(found).sort();
-				return iconNames;
-			};
-
-			/**
-			 * Rename prompt matching the app's own (function `tl`, the
-			 * "prompt-text-and-icon" widget), reusing its markup and classes.
-			 * The native dialog itself is internal to the app and not callable here.
-			 */
-			const renameView = (viewId, $tab) => {
-				const view = (plugin.getConfiguration().views || []).find(v => v.id === viewId);
-				if (!view || !$root) return;
-
-				closeMenu();
-				const originalLabel = view.label || '';
-				const originalIcon = view.icon || '';
-				let chosenIcon = originalIcon;
-
-				const $popover = document.createElement('div');
-				$popover.className = 'outline-popover';
-				$popover.innerHTML = /* html */ `
-					<div class='input-widget' style='padding: 10px; display: flex; flex-direction: column; gap: 10px'>
-						<div class="form-field" style="margin-top: 0px; display: flex; align-items: center;">
-							<div class='input-widget--icon' style="flex: 0 0 auto; margin-right: 5px">
-								<button class='id--icon-btn button-normal button-normal-hover' style="height: 100%; align-items: center">
-									<span class='id--icon'></span> <span class='ti ti-selector'></span>
-								</button>
-							</div>
-							<input maxlength="100" spellcheck="false" class='input-widget--input w-full form-input'
-								style="background: transparent; flex: 1 1 0px;" type='text' placeholder='Enter text...'>
-						</div>
-						<div class='input-widget--buttons' style='display: flex; justify-content: space-between; align-items: center; user-select: none'>
-							<span>
-								<button class='id--cancel button-minimal button-minimal-hover'>Cancel</button>
-								<span class='kbd'>Esc</span>
-							</span>
-							<span>
-								<span class='kbd'>↵</span>
-								<button class='id--ok button-primary'>OK</button>
-							</span>
-						</div>
-					</div>
-					<div class='outline-iconpicker' hidden>
-						<input class='form-input outline-iconsearch' type='text' placeholder='Search icons...' spellcheck='false'>
-						<div class='outline-icongrid'></div>
-					</div>
-				`;
-
-				const $body = $popover.querySelector('.input-widget');
-				const $input = $popover.querySelector('.input-widget--input');
-				const $iconBtn = $popover.querySelector('.id--icon-btn');
-				const $iconSlot = $popover.querySelector('.id--icon');
-				const $picker = $popover.querySelector('.outline-iconpicker');
-				const $iconSearch = $popover.querySelector('.outline-iconsearch');
-				const $iconGrid = $popover.querySelector('.outline-icongrid');
-
-				const paintIcon = () => {
-					$iconSlot.innerHTML = '';
-					$iconSlot.appendChild(ui.createIcon(chosenIcon || 'ti-table-dashed'));
-				};
-				paintIcon();
-				$input.value = originalLabel;
-
-				let settled = false;
-				const finish = (save) => {
-					if (settled) return;
-					settled = true;
-					const name = $input.value.trim();
-					const changed = name && (name !== originalLabel || chosenIcon !== originalIcon);
-					closeMenu();
-					if (save && changed) {
-						const next = structuredClone(plugin.getConfiguration());
-						const target = (next.views || []).find(v => v.id === viewId);
-						if (target) {
-							target.label = name;
-							target.icon = chosenIcon;
-							// Reloads the plugin, which re-renders the toolbar for us.
-							plugin.collection.saveConfiguration(next);
-							return;
-						}
-					}
-					renderToolbar();
-				};
-
-				const renderIconGrid = () => {
-					const needle = $iconSearch.value.trim().toLowerCase();
-					const list = allIconNames()
-						.filter(n => !needle || n.includes(needle))
-						.slice(0, 160);
-					$iconGrid.innerHTML = '';
-					list.forEach(name => {
-						const $btn = document.createElement('button');
-						$btn.className = 'outline-iconcell button-minimal-hover';
-						if (name === chosenIcon) $btn.classList.add('is-active');
-						$btn.title = name;
-						$btn.appendChild(ui.createIcon(name));
-						$btn.addEventListener('click', () => {
-							chosenIcon = name;
-							paintIcon();
-							$picker.hidden = true;
-							$body.hidden = false;
-							$input.focus();
-						});
-						$iconGrid.appendChild($btn);
-					});
-				};
-
-				$iconBtn.addEventListener('click', () => {
-					$body.hidden = true;
-					$picker.hidden = false;
-					$iconSearch.value = '';
-					renderIconGrid();
-					$iconSearch.focus();
-				});
-				$iconSearch.addEventListener('input', renderIconGrid);
-				$iconSearch.addEventListener('keydown', (e) => {
-					e.stopPropagation();
-					if (e.key === 'Escape') {
-						e.preventDefault();
-						$picker.hidden = true;
-						$body.hidden = false;
-						$input.focus();
-					}
-				});
-
-				$popover.querySelector('.id--ok').addEventListener('click', () => finish(true));
-				$popover.querySelector('.id--cancel').addEventListener('click', () => finish(false));
-				$popover.addEventListener('click', e => e.stopPropagation());
-				$input.addEventListener('keydown', (e) => {
-					e.stopPropagation();
-					if (e.key === 'Enter') {
-						e.preventDefault();
-						finish(true);
-					} else if (e.key === 'Escape') {
-						e.preventDefault();
-						finish(false);
-					}
-				});
-
-				$menu = $popover;
-				$root.appendChild($popover);
-				const rootRect = $root.getBoundingClientRect();
-				const tabRect = $tab.getBoundingClientRect();
-				$popover.style.left = `${Math.max(0, tabRect.left - rootRect.left)}px`;
-				$popover.style.top = `${tabRect.bottom - rootRect.top + 2}px`;
-
-				$input.focus();
-				$input.select();
 			};
 
 			const ensureSortState = () => {
@@ -668,7 +592,6 @@ export class Plugin extends CollectionPlugin {
 				&& !SORT_SKIP_TYPES.includes(f.type));
 
 			const openSortMenu = ($anchor) => {
-				if ($menu) return closeMenu();
 				const rect = $anchor.getBoundingClientRect();
 				const items = [];
 				sortableFields().forEach(field => items.push({
@@ -678,25 +601,6 @@ export class Plugin extends CollectionPlugin {
 					onSelect: () => applySort(field.id, sortDir),
 				}));
 				showMenu(items, rect.left, rect.bottom + 2, 'Sort by property...');
-			};
-
-			const openTabMenu = ($tab, view, e) => {
-				if ($menu) return closeMenu();
-				const items = [];
-				// The app hides Rename when the plugin manages its own views.
-				if (plugin.getConfiguration().managed?.views !== true) {
-					items.push({
-						label: 'Rename View',
-						icon: 'ti-pencil',
-						onSelect: () => renameView(view.id, $tab),
-					});
-				}
-				items.push({
-					label: 'Edit View ...',
-					icon: 'ti-settings',
-					onSelect: () => openViewEditor(view.id),
-				});
-				showMenu(items, e.clientX, e.clientY);
 			};
 
 			const renderToolbar = () => {
@@ -716,14 +620,8 @@ export class Plugin extends CollectionPlugin {
 					}, v.label);
 					$tab.classList.add('outline-tb-tab');
 					if (v.id === activeId) $tab.classList.add('is-active');
-					$tab.addEventListener('contextmenu', (e) => {
-						e.preventDefault();
-						e.stopPropagation();
-						openTabMenu($tab, v, e);
-					});
 					$views.appendChild($tab);
 				});
-				$views.appendChild(toolbarButton('ti-plus', 'Add view', openAddView));
 				$toolbar.appendChild($views);
 
 				const $actions = document.createElement('div');
@@ -737,11 +635,6 @@ export class Plugin extends CollectionPlugin {
 					$divider.className = 'outline-tb-divider';
 					$actions.appendChild($divider);
 				}
-
-				$actions.appendChild(toolbarButton('ti-adjustments', 'Configure view', () => {
-					if (activeId) openViewEditor(activeId);
-					else openAddView();
-				}));
 
 				const $sortWrap = document.createElement('span');
 				$sortWrap.className = 'outline-sort-wrap';
@@ -872,9 +765,23 @@ export class Plugin extends CollectionPlugin {
 
 					$row.appendChild($title);
 
-					$row.addEventListener('click', () => {
+					// Native list cards act on mouseup, not click, so middle-click is
+					// caught too: shift = focus only, middle or cmd/ctrl = other panel,
+					// plain left = this panel.
+					$row.addEventListener('mouseup', (e) => {
+						if (e.button !== 0 && e.button !== 1) return;
+						hidePeek();
 						setSelection(index);
-						viewContext.openRecordInThisPanel(node.id);
+						if (e.button === 0 && e.shiftKey) {
+							e.preventDefault();
+							return;
+						}
+						if (e.button === 1 || e.metaKey || e.ctrlKey) {
+							viewContext.openRecordInOtherPanel(node.id);
+						} else {
+							viewContext.openRecordInThisPanel(node.id);
+						}
+						e.preventDefault();
 					});
 
 					$list.appendChild($row);
@@ -894,7 +801,6 @@ export class Plugin extends CollectionPlugin {
 				// overhang, gaps) that the native list rows and create card are
 				// sized from; it only sets width:100%/position:relative itself.
 				$root.className = 'outline-root collection-list-view';
-				$root.addEventListener('click', closeMenu);
 
 				$toolbar = document.createElement('div');
 				$toolbar.className = 'outline-toolbar';
@@ -918,14 +824,14 @@ export class Plugin extends CollectionPlugin {
 				// Arrow keys must still drive the list while the caret is in the box.
 				$search.addEventListener('keydown', (e) => {
 					if (e.key === 'ArrowDown') {
+						// Native hands focus from the search box to the FIRST row
+						// (focusFromCollectionSearch), and the box gives up focus.
 						e.preventDefault();
-						setSelection(selectedIndex + 1);
-					} else if (e.key === 'ArrowUp') {
-						e.preventDefault();
-						setSelection(selectedIndex - 1);
+						$search.blur();
+						setSelection(0);
 					} else if (e.key === 'Enter') {
 						e.preventDefault();
-						openSelected();
+						openSelected(e.metaKey || e.ctrlKey);
 					} else if (e.key === 'Escape') {
 						e.preventDefault();
 						$search.value = '';
@@ -1030,44 +936,6 @@ export class Plugin extends CollectionPlugin {
 							position: relative;
 							display: inline-flex;
 						}
-						.outline-popover {
-							position: absolute;
-							z-index: 20;
-							width: 500px;
-							max-width: 92%;
-							background: var(--cmdpal-bg-color);
-							border: 1px solid var(--cmdpal-border-color);
-							border-radius: var(--radius-normal);
-							box-shadow: var(--cmdpal-box-shadow);
-						}
-						.outline-iconpicker {
-							padding: 10px;
-							display: flex;
-							flex-direction: column;
-							gap: 8px;
-						}
-						.outline-icongrid {
-							display: grid;
-							grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
-							gap: 2px;
-							max-height: 240px;
-							overflow-y: auto;
-						}
-						.outline-iconcell {
-							display: inline-flex;
-							align-items: center;
-							justify-content: center;
-							height: 32px;
-							background: transparent;
-							border: 1px solid transparent;
-							border-radius: var(--radius-normal);
-							color: var(--text-muted);
-							cursor: pointer;
-						}
-						.outline-iconcell.is-active {
-							background: var(--cmdpal-selected-bg-color);
-							color: var(--cmdpal-selected-fg-color);
-						}
 						.outline-menu {
 							position: absolute;
 							z-index: 20;
@@ -1100,7 +968,15 @@ export class Plugin extends CollectionPlugin {
 							background: var(--cmdpal-hover-bg-color);
 							color: var(--cmdpal-hover-fg-color);
 						}
+						/* the current value, as the app's .autocomplete--current */
 						.outline-menu-item.is-active {
+							background: var(--cmdpal-current-bg-color);
+							color: var(--cmdpal-current-fg-color);
+							font-weight: 700;
+						}
+						/* the keyboard highlight, as .autocomplete--option-selected */
+						.outline-menu-item.is-selected,
+						.outline-menu-item.is-selected:hover {
 							background: var(--cmdpal-selected-bg-color);
 							color: var(--cmdpal-selected-fg-color);
 						}
@@ -1271,6 +1147,8 @@ export class Plugin extends CollectionPlugin {
 				onPanelResize: () => restack(),
 
 				onDestroy: () => {
+					closeMenu();
+					hidePeek();
 					hierarchy = null;
 					rows = [];
 					$root = null;
@@ -1284,6 +1162,8 @@ export class Plugin extends CollectionPlugin {
 				onBlur: () => {},
 
 				onKeyboardNavigation: ({ e }) => {
+					// An open menu owns the keyboard; its own keydown drives it.
+					if ($menu) return;
 					// The search box handles its own keys via its keydown listener.
 					if ($search && document.activeElement === $search) return;
 					if (rows.length === 0) return;
@@ -1296,14 +1176,54 @@ export class Plugin extends CollectionPlugin {
 						return;
 					}
 
+					// "/" jumps to the search box, as it does in the native views.
+					if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+						e.preventDefault();
+						if ($search) $search.focus();
+						return;
+					}
+
+					// Cmd/Ctrl+Enter opens aside, matching the native card handler.
+					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+						e.preventDefault();
+						// A peek already put the record aside; keep that panel.
+						if (peekPanelId) commitPeek();
+						else openSelected(true);
+						return;
+					}
+
+					// While peeking, Escape exits and Enter commits — the same pair
+					// the app puts in the status bar during a peek.
+					if (peekPanelId && e.key === 'Escape') {
+						e.preventDefault();
+						hidePeek();
+						return;
+					}
+					if (e.key === ' ') {
+						e.preventDefault();
+						togglePeek();
+						return;
+					}
+
 					switch (e.key) {
+						case 'Tab':
+							// Shift+Tab is NOT handled by the native card views — it
+							// falls through their switch untouched. Leave it to the
+							// browser here too.
+							if (e.shiftKey) return;
+							e.preventDefault();
+							selectNext(1);
+							break;
 						case 'ArrowDown':
 							e.preventDefault();
-							setSelection(selectedIndex + 1);
+							selectNext(1);
 							break;
 						case 'ArrowUp':
 							e.preventDefault();
-							setSelection(selectedIndex - 1);
+							// From the first row the native views hand focus back to
+							// the search box rather than wrapping.
+							if (selectedIndex === 0 && $search) $search.focus();
+							else selectNext(-1);
 							break;
 						case 'ArrowRight':
 							e.preventDefault();
@@ -1331,9 +1251,10 @@ export class Plugin extends CollectionPlugin {
 							setSelection(rows.length - 1);
 							break;
 						case 'Enter':
-						case ' ':
 							e.preventDefault();
-							openSelected();
+							// Enter during a peek commits it: the side panel stays.
+							if (peekPanelId) commitPeek();
+							else openSelected(false);
 							break;
 					}
 				},
