@@ -142,9 +142,21 @@ Three limitations, all from the same missing primitive:
   panel that is on its way out and goes down with it. **The visible cost is a
   flicker** — the aside disappears and comes back. If a replace-navigation call
   ever lands in the SDK, drop this whole dance.
-- **No peek indicator.** Native marks the panel as a preview and swaps the
-  status bar to Escape/Enter/Browse hints. A plugin can't set either, so a
-  peeked panel looks exactly like a normally-opened one.
+- **No peek indicator.** A previewing panel carries `panel-navigation-preview`,
+  which the stylesheet cashes in for exactly one thing —
+  `.panel-navigation-preview .panel-tab--title{font-style:italic}` — and the
+  view swaps the status bar to Escape/Enter/Browse via
+  `getPeekStatusBarContext()`. Neither is reachable: the class goes on a panel
+  node a plugin has no business touching, and the status-bar *shortcut context*
+  comes from a view's `qe()`, which custom views don't supply. `ui.addStatusBarItem()`
+  could add a "Peeking" item alongside the defaults if it ever seems worth it.
+  As it stands a peeked panel looks like a normally-opened one.
+
+Unrelated to peek, the same `qe()` gap is why this view's status bar differs
+from List's at all times: native views return a shortcut list with
+`skipDefaultShortcuts: true`, so List shows its own set (Search / Peek / Edit
+cell / Open Aside / …). A custom view supplies none, so the app's defaults show
+instead.
 
 ## Things the app does that aren't in the SDK docs
 
