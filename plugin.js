@@ -298,6 +298,27 @@ export class Plugin extends CollectionPlugin {
 				setSelection(restored === -1 ? 0 : restored);
 			};
 
+			/**
+			 * Rows are laid out single-line; any whose name had to ellipsise to make
+			 * room for its chips is stacked onto two lines instead. Always resets to
+			 * the single-line baseline first, otherwise a stacked row measures as
+			 * fitting and would oscillate. Reads and writes are batched to keep this
+			 * to one forced layout.
+			 */
+			const restack = () => {
+				if (!$list) return;
+				const $rows = Array.from($list.querySelectorAll('.outline-row'));
+				$rows.forEach($r => $r.classList.remove('is-stacked'));
+				const needsStacking = $rows.map($r => {
+					const $name = $r.querySelector('.outline-name');
+					if (!$name || !$r.querySelector('.outline-props')) return false;
+					return $name.scrollWidth > $name.clientWidth + 1;
+				});
+				$rows.forEach(($r, i) => {
+					if (needsStacking[i]) $r.classList.add('is-stacked');
+				});
+			};
+
 			const openSelected = () => {
 				const current = rows[selectedIndex];
 				if (current) viewContext.openRecordInThisPanel(current.node.id);
@@ -749,23 +770,22 @@ export class Plugin extends CollectionPlugin {
 						$title.appendChild($count);
 					}
 
+					const chips = fields
+						.map(field => ({ field, value: propValue(node.record, field) }))
+						.filter(entry => entry.value);
+					if (chips.length) {
+						const $props = document.createElement('span');
+						$props.className = 'outline-props';
+						chips.forEach(({ field, value }) => $props.appendChild(propChip(field, value)));
+						$title.appendChild($props);
+					}
+
 					const $time = document.createElement('span');
 					$time.className = 'outline-time';
 					$time.textContent = timeAgo(node.record.date('Modified'));
 					$title.appendChild($time);
 
 					$row.appendChild($title);
-
-					const chips = fields
-						.map(field => ({ field, value: propValue(node.record, field) }))
-						.filter(entry => entry.value);
-					if (chips.length) {
-						const $props = document.createElement('div');
-						$props.className = 'outline-props';
-						$props.style.paddingLeft = `${indent + TWISTY_W + ROW_GAP}px`;
-						chips.forEach(({ field, value }) => $props.appendChild(propChip(field, value)));
-						$row.appendChild($props);
-					}
 
 					$row.addEventListener('click', () => {
 						setSelection(index);
@@ -775,6 +795,7 @@ export class Plugin extends CollectionPlugin {
 					$list.appendChild($row);
 				});
 
+				restack();
 				setSelection(selectedIndex);
 			};
 
@@ -1067,6 +1088,8 @@ export class Plugin extends CollectionPlugin {
 							flex: 0 0 auto;
 						}
 						.outline-name {
+							flex: 0 1 auto;
+							min-width: 0;
 							font-weight: 600;
 							white-space: nowrap;
 							overflow: hidden;
@@ -1084,10 +1107,23 @@ export class Plugin extends CollectionPlugin {
 							color: var(--text-muted);
 						}
 						.outline-props {
-							display: flex;
+							display: inline-flex;
 							align-items: center;
-							flex-wrap: wrap;
+							flex: 0 0 auto;
 							gap: 10px;
+							margin-left: 4px;
+						}
+						/* Two-line fallback: chips drop below, timestamp stays on line 1. */
+						.outline-row.is-stacked .outline-title {
+							flex-wrap: wrap;
+						}
+						.outline-row.is-stacked .outline-time {
+							order: 1;
+						}
+						.outline-row.is-stacked .outline-props {
+							order: 2;
+							flex-basis: 100%;
+							margin-left: ${TWISTY_W + ROW_GAP}px;
 							margin-top: 2px;
 						}
 						.outline-prop {
@@ -1139,7 +1175,7 @@ export class Plugin extends CollectionPlugin {
 					renderRows();
 				},
 
-				onPanelResize: () => {},
+				onPanelResize: () => restack(),
 
 				onDestroy: () => {
 					hierarchy = null;

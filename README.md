@@ -51,6 +51,9 @@ bin/thymercli plugin show Organizations -w W3TZX0YZ4FRCMSHGB976K32N4D --json | j
   rendered by type — choice as a colored pill, record as a link chip with `↗`,
   number/text as plain text. Editing visible properties in view settings
   changes the rows.
+- **Rows adapt** between one and two lines: chips sit inline after the name
+  when they fit, and drop to a second line (indented under the row icon, with
+  the timestamp held on line 1) when they don't. See `restack()` below.
 - **Rebuilt toolbar** (custom views get none — see below): view tabs, Add view,
   New <item>, Configure view, sort field, sort direction. Right-clicking a tab
   gives Rename View / Edit View, mirroring the app's own context menu.
@@ -149,6 +152,12 @@ cursor; menus here do the same against `.outline-root`.
   the property-row indent, and the create card's left padding. `TWISTY_W` and
   `ROW_GAP` must match `.outline-twisty`'s width and `.outline-title`'s gap in
   the injected CSS — that pairing is not enforced.
+- `restack()` decides one-vs-two-line rows by whether the name had to
+  ellipsise (`scrollWidth > clientWidth`), which works only because chips are
+  `flex: 0 0 auto` and the name is the one thing allowed to shrink. It **must**
+  clear `.is-stacked` from every row before measuring: a stacked row has a
+  full-width name, so it measures as fitting and rows would oscillate. Reads
+  and writes are batched to keep it at one forced layout per pass.
 - `buildHierarchy()` promotes any record caught in a `Parent` cycle to a root.
   Without it those records are unreachable from any root and vanish silently.
 - Sibling order is whatever the app hands over, so the view's sort actually
