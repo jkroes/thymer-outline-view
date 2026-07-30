@@ -265,7 +265,17 @@ export class Plugin extends CollectionPlugin {
 					$row.classList.toggle('selected', i === selectedIndex);
 				});
 				const $selected = $list.querySelector(`.outline-row[data-index="${selectedIndex}"]`);
-				if ($selected) $selected.scrollIntoView({ block: 'nearest' });
+				if ($selected) {
+					$selected.scrollIntoView({ block: 'nearest' });
+					// Put DOM focus on the row itself, the way native focuses a card.
+					// It matters for unhandled keys: Shift+Tab is the browser's, and
+					// from the view root — which precedes everything inside it in
+					// document order — it walks OUT of the view to the panel's
+					// breadcrumb. From the row it reaches the search box, as native does.
+					if (document.activeElement !== $search) {
+						$selected.focus({ preventScroll: true });
+					}
+				}
 				// Native peek follows the focused card as you keep browsing — but only
 				// while the peek panel is still open. The user may have closed it.
 				if (peekPanelId) {
@@ -736,6 +746,10 @@ export class Plugin extends CollectionPlugin {
 					const $row = document.createElement('div');
 					$row.className = 'outline-row';
 					$row.dataset.index = String(index);
+					// Focusable but not in the Tab order: Tab is handled explicitly,
+					// while unhandled keys (Shift+Tab) need a focused node here so the
+					// browser walks focus from the row, not from the view root.
+					$row.tabIndex = -1;
 					$row.dataset.guid = node.id;
 
 					const $title = document.createElement('div');
