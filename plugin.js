@@ -354,9 +354,16 @@ export class Plugin extends CollectionPlugin {
 				if (panel) ui.closePanel(panel);
 			};
 
-			/** Leave the panel open but stop treating it as a peek (native's commit). */
+			/**
+			 * Native's commit: the previewed panel stops being a preview and becomes
+			 * the real navigation, which means focus moves into it. Without that last
+			 * part a commit looks like nothing happened — the panel just quietly stops
+			 * following the selection.
+			 */
 			const commitPeek = () => {
+				const panel = peekPanel();
 				peekPanelId = null;
+				if (panel) ui.setActivePanel(panel);
 			};
 
 			const showPeek = () => {
