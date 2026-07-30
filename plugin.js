@@ -356,14 +356,29 @@ export class Plugin extends CollectionPlugin {
 
 			/**
 			 * Native's commit: the previewed panel stops being a preview and becomes
-			 * the real navigation, which means focus moves into it. Without that last
-			 * part a commit looks like nothing happened — the panel just quietly stops
-			 * following the selection.
+			 * the real navigation, focus included.
+			 *
+			 * Native peek replaces the panel's navigation on every step, so committing
+			 * leaves one history entry and Cmd+[ closes the panel. Nothing in the SDK
+			 * replaces a navigation — `navigateTo` takes no replace flag and forwards
+			 * only the navigation object — so every arrow-key step here has pushed an
+			 * entry, and Cmd+[ would walk back through every record peeked at before
+			 * closing. Commit by throwing the panel away and opening a fresh one on
+			 * the final record, which starts its history over.
 			 */
 			const commitPeek = () => {
+				const current = rows[selectedIndex];
 				const panel = peekPanel();
 				peekPanelId = null;
-				if (panel) ui.setActivePanel(panel);
+				if (panel) ui.closePanel(panel);
+				// closePanel() only starts a 150ms zoomOut animation and removes the
+				// panel on a timer afterwards, so it is still in the layout and still
+				// the target for an "other panel" open until then. Reopen after it is
+				// really gone, or the fresh navigation goes down with it.
+				// Opening aside focuses the new panel, which is what a commit wants.
+				if (current) {
+					setTimeout(() => viewContext.openRecordInOtherPanel(current.node.id), 220);
+				}
 			};
 
 			const showPeek = () => {

@@ -81,12 +81,13 @@ falls through untouched.
 | Shift+Tab | *unhandled* — falls through, no `preventDefault` | same (left to the browser) |
 | ← / → | move by one grid column, so a no-op in a 1-column list | collapse / expand, or step to parent / first child |
 | Home / End | first / last card | same |
-| Enter | open focused record in this panel | same |
-| ⌘/Ctrl+Enter | open aside (other panel) | same |
+| Enter | open focused record in this panel; during a peek, *commit* the preview | same |
+| ⌘/Ctrl+Enter | open aside (other panel); during a peek, commit | same |
 | Shift+Enter | create a card below | create (position not controllable) |
 | Alt+Enter | create a card above | — no SDK call for positioned create |
 | Space | peek — put the record in the side panel; Space again closes it | same |
 | Escape | exit peek, or cancel an untouched new card | closes the peek panel |
+| ⌘+[ / ⌘+] | panel history back / forward | the app's own, but see the peek history note |
 | `/` | focus the collection search box | same |
 | M | move mode — keyboard drag-reorder, refused while sorted | — no SDK write for the per-view `$o:<viewId>` order key |
 | E | property mode — ↑/↓ through a card's properties, Enter edits | — no SDK inline property editor |
@@ -106,12 +107,44 @@ navigation loop in both directions — ↓ from the box focuses the **first** ro
 **Peek is rebuilt from panel calls.** Native peek is a panel navigation preview
 — `previewItemWithHighlight()`, `hasNavigationPreview()`,
 `dismissNavigationPreview()`, `commitNavigationPreview(true)` — all on the panel
-component, none of them on the SDK's `PluginPanel`. The same behavior comes out
-of `openRecordInOtherPanel()` plus `ui.closePanel()`: Space opens the record
-aside and remembers that panel's id, moving the selection re-opens into it,
-Space or Escape closes it, and Enter (or ⌘/Ctrl+Enter) *commits* by forgetting
-the id so the panel simply stays. The id is re-resolved through
-`ui.getPanels()` on each use, since the user may have closed it in the meantime.
+component, none of them on the SDK's `PluginPanel`. What it does here:
+
+| key | what happens |
+|---|---|
+| Space | opens the focused record aside via `openRecordInOtherPanel()` and stores that panel's id |
+| ↑ / ↓ while peeking | selection moves and the aside re-opens onto the new record, so it follows |
+| Space or Escape | `ui.closePanel()` on the stored panel |
+| Enter or ⌘/Ctrl+Enter | commits: the aside becomes a real open and takes focus |
+
+The stored id is re-resolved through `ui.getPanels()` before every use, because
+the user may have closed the panel by hand — without that check, the next arrow
+key reopens a panel they just dismissed.
+
+Three limitations, all from the same missing primitive:
+
+- **Focus has to be stolen back, on a timer.** `openRecordInOtherPanel()` gives
+  focus to the aside's editor, and a custom view only receives keys while its
+  own component has focus (`onKeyDown(e){ let t=Ze(); t && (t==this._() ||
+  t==this) && this.onKeyboardNavigation(e) }`) — the editor also eats Space as
+  text. `showPeek()` calls `setActivePanel` + `focus()` on the view root
+  immediately, on the next frame, and again at 120ms, because the aside paints
+  and focuses its editor after the call returns. A single synchronous grab loses
+  that race.
+- **Committing makes the panel blink.** Native peek *replaces* the panel's
+  navigation each step, so a commit leaves one history entry and ⌘+[ closes the
+  panel. Nothing in the SDK replaces a navigation — `navigateTo` takes no
+  replace flag and its wrapper forwards only the navigation object — so every
+  arrow while peeking pushes an entry, and ⌘+[ would walk back through every
+  record peeked at. `commitPeek()` works around it by closing the panel and
+  reopening it on the final record, which starts history over. That reopen has
+  to wait ~220ms: `closePanel()` only kicks off a 150ms `zoomOut` animation and
+  removes the panel on a timer afterwards, so an earlier reopen lands in the
+  panel that is on its way out and goes down with it. **The visible cost is a
+  flicker** — the aside disappears and comes back. If a replace-navigation call
+  ever lands in the SDK, drop this whole dance.
+- **No peek indicator.** Native marks the panel as a preview and swaps the
+  status bar to Escape/Enter/Browse hints. A plugin can't set either, so a
+  peeked panel looks exactly like a normally-opened one.
 
 ## Things the app does that aren't in the SDK docs
 
