@@ -55,9 +55,11 @@ bin/thymercli plugin show Organizations -w W3TZX0YZ4FRCMSHGB976K32N4D --json | j
   rendered by type — choice as a colored pill, record as a link chip with `↗`,
   number/text as plain text. Editing visible properties in view settings
   changes the rows.
-- **Rows adapt** between one and two lines: chips sit inline after the name
-  when they fit, and drop to a second line (indented under the row icon, with
-  the timestamp held on line 1) when they don't. See `restack()` below.
+- **Rows adapt** between one and two lines: chips sit on line 1 when they fit,
+  **right-aligned** against the timestamp so every row's chips end at the same
+  x, and drop to a second line — **left-aligned** under the row icon — when
+  they don't. The name ellipsises rather than wrapping, and the stamp holds
+  line 1 either way. See `restack()` below.
 - **Rebuilt toolbar** (custom views get none — see below): view tabs, New
   <item>, sort field, sort direction. View management — add, rename, configure —
   is left to the app's own collection-settings screen.
@@ -398,9 +400,20 @@ cursor; menus here do the same against `.outline-root`.
 - `restack()` decides one-vs-two-line rows by whether the name had to
   ellipsise (`scrollWidth > clientWidth`), which works only because chips are
   `flex: 0 0 auto` and the name is the one thing allowed to shrink. It **must**
-  clear `.is-stacked` from every row before measuring: a stacked row has a
-  full-width name, so it measures as fitting and rows would oscillate. Reads
-  and writes are batched to keep it at one forced layout per pass.
+  put the chips back inline and clear `.is-stacked` from every row before
+  measuring: a stacked row has a full-width name, so it measures as fitting and
+  rows would oscillate. Reads and writes are batched to keep it at one forced
+  layout per pass.
+- Stacking **moves** the chips out of `.outline-title` rather than wrapping it.
+  Wrapping let the name claim the full width and pushed the timestamp onto a
+  third line; a one-line flex container leaves the name no choice but to
+  shrink. Because the chips leave the title element, their depth indent has to
+  be re-applied from `$row.dataset.indent`.
+- **One auto margin per line.** `.outline-props` carries `margin-left: auto` and
+  the stamp carries none. Giving both one splits the free space evenly between
+  them, which leaves the chips floating mid-row at an x that tracks the name's
+  length. The stamp is also a fixed `8ch` column, or a shorter stamp ("1h ago"
+  against "17m ago") shifts that row's chips out of line with the rest.
 - `buildHierarchy()` promotes any record caught in a parent cycle to a root.
   Without it those records are unreachable from any root and vanish silently.
   `setSubPageOf()` refuses to create one, but a hand-made record field is free

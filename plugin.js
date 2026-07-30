@@ -327,18 +327,37 @@ export class Plugin extends CollectionPlugin {
 			 * the single-line baseline first, otherwise a stacked row measures as
 			 * fitting and would oscillate. Reads and writes are batched to keep this
 			 * to one forced layout.
+			 *
+			 * Stacking MOVES the chips out of the title line rather than wrapping it.
+			 * Wrapping let the name take the full width and pushed the timestamp onto
+			 * a line of its own — a three-line row, where native ellipsises the name
+			 * and keeps the stamp on line 1. A one-line flex container can't wrap, so
+			 * the name has no choice but to shrink.
 			 */
 			const restack = () => {
 				if (!$list) return;
 				const $rows = Array.from($list.querySelectorAll('.outline-row'));
-				$rows.forEach($r => $r.classList.remove('is-stacked'));
+				$rows.forEach($r => {
+					const $props = $r.querySelector('.outline-props');
+					const $title = $r.querySelector('.outline-title');
+					if ($props && $title && $props.parentElement !== $title) {
+						$title.insertBefore($props, $r.querySelector('.outline-time'));
+					}
+					$r.classList.remove('is-stacked');
+				});
 				const needsStacking = $rows.map($r => {
 					const $name = $r.querySelector('.outline-name');
 					if (!$name || !$r.querySelector('.outline-props')) return false;
 					return $name.scrollWidth > $name.clientWidth + 1;
 				});
 				$rows.forEach(($r, i) => {
-					if (needsStacking[i]) $r.classList.add('is-stacked');
+					if (!needsStacking[i]) return;
+					$r.classList.add('is-stacked');
+					const $props = $r.querySelector('.outline-props');
+					$props.style.paddingLeft = `${Number($r.dataset.indent) + TWISTY_W + ROW_GAP}px`;
+					// Before the property list, when E has one open — chips belong to
+					// the row above it, not below it.
+					$r.insertBefore($props, $r.querySelector('.outline-propedit'));
 				});
 			};
 
@@ -1051,6 +1070,9 @@ export class Plugin extends CollectionPlugin {
 					// browser walks focus from the row, not from the view root.
 					$row.tabIndex = -1;
 					$row.dataset.guid = node.id;
+					// restack() needs the depth indent to line the chips up under the
+					// row icon once they are out of the title line.
+					$row.dataset.indent = String(indent);
 
 					const $title = document.createElement('div');
 					$title.className = 'outline-title';
@@ -1429,31 +1451,52 @@ export class Plugin extends CollectionPlugin {
 							font-size: var(--text-size-small);
 							color: var(--text-subtle);
 						}
+						/*
+						 * A fixed column, not shrink-to-fit: the chips are pushed up
+						 * against the stamp, so a stamp that is one character shorter
+						 * ("1h ago" against "16m ago") would otherwise leave that row's
+						 * chips ending at a different x from every other row's.
+						 */
 						.outline-time {
-							margin-left: auto;
 							flex: 0 0 auto;
+							min-width: 8ch;
+							text-align: right;
 							font-size: var(--text-size-small);
 							color: var(--text-muted);
 						}
+						/*
+						 * Chips are pushed to the right, so they and the timestamp read
+						 * as one right-hand column instead of trailing the name at a
+						 * different x on every row.
+						 *
+						 * This is the ONLY auto margin on the line. Giving the stamp one
+						 * as well splits the free space evenly between the two, which
+						 * left the chips floating mid-row at a position that tracked the
+						 * name's length — the opposite of aligned.
+						 */
 						.outline-props {
 							display: inline-flex;
 							align-items: center;
 							flex: 0 0 auto;
 							gap: 10px;
-							margin-left: 4px;
+							margin-left: auto;
+							padding-right: 10px;
 						}
-						/* Two-line fallback: chips drop below, timestamp stays on line 1. */
-						.outline-row.is-stacked .outline-title {
-							flex-wrap: wrap;
-						}
-						.outline-row.is-stacked .outline-time {
-							order: 1;
-						}
+						/*
+						 * Two-line fallback: the chips are moved out of the title line
+						 * (restack()), which keeps that line unwrappable — the name
+						 * ellipsises and the timestamp stays put, as native does. The
+						 * left offset is set inline, since it follows the row's depth.
+						 */
+						/* Wrapped, the chips are left-aligned under the row icon: there
+						   is no stamp on line 2 to align them against, and a lone
+						   right-aligned run reads as belonging to the row below. */
 						.outline-row.is-stacked .outline-props {
-							order: 2;
-							flex-basis: 100%;
-							margin-left: ${TWISTY_W + ROW_GAP}px;
+							display: flex;
+							justify-content: flex-start;
+							margin-left: 0;
 							margin-top: 2px;
+							padding-right: 0;
 						}
 						.outline-prop {
 							display: inline-flex;
