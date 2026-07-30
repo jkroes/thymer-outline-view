@@ -76,10 +76,10 @@ falls through untouched.
 
 | input | native list view | here |
 |---|---|---|
-| ↓ | next card; wraps past the last via `(r % len + len) % len` | same |
-| ↑ | previous card; from the **first** row it focuses the search box instead of wrapping. From the search box focus carries on up, out of the panel content | same, and ArrowUp in the search box is left unhandled so the app takes focus onward |
-| Tab | joins the panel's focus order — breadcrumb → view tabs → New \<item\> → sort field → sort direction → search box → rows, then steps down the rows | same from the search box down; the breadcrumb is the app's and out of reach |
-| Shift+Tab | **no defined behavior.** `Wi(e)` normalizes it to `"Shift+Tab"`, which matches no case in the cards switch, so it falls through with no `preventDefault` and the browser's sequential focus order takes over — from the card, its title, or a property row, whichever holds focus. Lands on the toolbar or the search box seemingly at random | same: left unhandled, on purpose |
+| ↓ | next row, wrapping past the last via `(r % len + len) % len`; upstream of the rows it walks the chain below | same |
+| ↑ | previous row; from the **first** row the search box, then the active view tab, then the panel title | same up to the view tab. The title is the app's, so ArrowUp there is left alone |
+| Tab | view tabs → the buttons to their right → search box → rows, then steps down the rows and wraps | same. Toolbar Tab is moved by hand: the browser default never reaches the view, though Shift+Tab's does |
+| Shift+Tab | **no defined behavior.** `Wi(e)` normalizes it to `"Shift+Tab"`, which matches no case in the cards switch, so it falls through with no `preventDefault` and the browser's focus order decides — starting from the card, its title, or a property row, whichever holds focus. Lands on the toolbar or the search box seemingly at random | same: left unhandled on purpose. Reaching the *same* elements needed the selected row to hold real DOM focus — see below |
 | ← / → | move by one grid column, so a no-op in a 1-column list | collapse / expand, or step to parent / first child |
 | Home / End | first / last card | same |
 | Enter | open focused record in this panel; during a peek, *commit* the preview | same |
@@ -100,10 +100,28 @@ falls through untouched.
 | click a property row or the title | focus that field for inline editing | opens the linked record for `record` chips; other types are inert |
 | drag | reorder (writes custom order) | — not implemented |
 
-Two details worth keeping in mind: native acts on **`mouseup`**, not `click`,
-which is how it catches middle-click at all; and the search box is part of the
-navigation loop in both directions — ↓ from the box focuses the **first** row
-(`focusFromCollectionSearch`), not the row after the current one.
+Three details worth keeping in mind.
+
+Native acts on **`mouseup`**, not `click`, which is how it catches middle-click
+at all.
+
+The search box is part of the navigation loop in both directions — ↓ from the
+box focuses the **first** row (`focusFromCollectionSearch`), not the row after
+the current one.
+
+**The selected row has to hold real DOM focus** (`tabIndex = -1` — focusable,
+but out of the Tab order this view drives itself). Keys the view leaves
+unhandled are resolved by the browser from whatever has focus, and with focus
+parked on the view root those walked *out* of the view: the root precedes
+everything inside it in document order, so Shift+Tab jumped to the panel
+breadcrumb rather than back to the search box.
+
+**Keys aimed at something else must be let through.** The hook fires even while
+a node outside the view holds focus — the panel's breadcrumb button being the
+one you'll hit. Treating those as row navigation made Tab jump into the rows
+from up there and swallowed the breadcrumb's own Space. The handler now returns
+unless the focused element is inside the view root, or is `document.body` (the
+state the view sits in normally, where arrows still have to work).
 
 **Peek is rebuilt from panel calls.** Native peek is a panel navigation preview
 — `previewItemWithHighlight()`, `hasNavigationPreview()`,
