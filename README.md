@@ -31,10 +31,12 @@ collection already nests. The view takes "Sub-page of" when the collection has
 it, and otherwise falls back to the first active record-link property whose
 target is this same collection. First means first in the collection's field
 order, and there is no way to choose, so keep it to one such property. If that
-property holds several links, only the first is read.
+property holds several links, only the first is read. See [Known limitations](#known-limits).
 
 Turning sub-pages back off removes the "Sub-page of" property from the
-collection outright, taking the nesting with it.
+collection, so the view loses that hierarchy and falls back to a self-pointing
+property if you have one. The links survive: turn sub-pages on again and every
+parent comes back exactly as it was.
 
 ### 2. Add a Custom view
 
