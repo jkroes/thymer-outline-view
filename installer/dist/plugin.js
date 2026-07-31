@@ -259,10 +259,22 @@ class Plugin extends AppPlugin {
 			return btn;
 		};
 
-		const installed = s.views > 0 && (s.code === 'current' || s.code === 'outdated');
-		run(s.code === 'outdated' ? 'Update' : installed ? 'Reinstall' : 'Install',
-			(a, l) => this.install(a, l), true);
-		if (installed) run('Remove', (a, l) => this.uninstall(a, l), false);
+		// The action button says what it will actually do, and is dropped entirely
+		// when there is nothing to do — a button whose only outcome is "already up
+		// to date" is worse than no button.
+		const ours = s.code === 'current' || s.code === 'outdated';
+		const present = s.views > 0 && ours;
+		const complete = present && s.nests && s.code === 'current';
+
+		if (!complete) {
+			run(s.code === 'outdated' ? 'Update' : present ? 'Repair' : 'Install',
+				(a, l) => this.install(a, l), true);
+		}
+		if (present) run('Remove', (a, l) => this.uninstall(a, l), false);
+		if (complete) {
+			const ok = el('div', box, 'Installed');
+			ok.style.cssText = 'font-size:12px;opacity:.6;align-self:center;';
+		}
 	}
 }
 
