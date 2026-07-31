@@ -26,7 +26,7 @@ not do.
 
 | file | what |
 |---|---|
-| `plugin.js` | the view. `export class Plugin` — the `export` is stripped on deploy |
+| `plugin.js` | the view. Declares a bare `class Plugin`, no `export`, so the file is paste-ready for the in-app Custom Code editor with no edit step. That also means `plugins/build.sh` can't bundle it — that script's `--format=iife --global-name=plugins` needs an export. Nothing here uses it; deploy is the `thymercli` path below |
 | `plugin.json` | **an example.** One workspace's exported collection config — its guids, field ids and choice ids are that workspace's, not portable. Useful as a shape reference and as the deploy artifact in the tree it came from; not a template to copy into another workspace |
 
 ## Deploy
@@ -36,8 +36,8 @@ not do.
 workspace's guid.
 
 ```bash
-sed 's/^export class/class/' plugins/outline-view/plugin.js \
-  | bin/thymercli plugin update code <Collection> -w <workspace-guid>
+bin/thymercli plugin update code <Collection> \
+  -w <workspace-guid> < plugins/outline-view/plugin.js
 
 bin/thymercli plugin update config <Collection> \
   -w <workspace-guid> --file plugins/outline-view/plugin.json

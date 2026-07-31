@@ -92,7 +92,7 @@ function buildHierarchy(records, parentFieldId) {
 	return { nodes, rootNodes };
 }
 
-export class Plugin extends CollectionPlugin {
+class Plugin extends CollectionPlugin {
 
 	onLoad() {
 		this.registerOutlineView();
