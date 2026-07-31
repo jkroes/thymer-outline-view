@@ -14,9 +14,7 @@ A collection view that shows your records as an indented, collapsible tree inste
   line up in a right-hand column, and wrap to a second line when space is limited.
 - **A working toolbar.** Thymer doesn't give custom views the usual toolbar, so this
   rebuilds it: view tabs, a create button, sort field and direction.
-- **So many shortcuts.** You'll forget this isn't a built-in view. Peek a branch
-  with `Space`, edit properties in place with `E`, create without leaving the
-  tree. See [Keys](#keys).
+- **So many shortcuts.** You'll forget this isn't a built-in view. See [Keys](#keys).
 
 ## Install
 
@@ -75,44 +73,16 @@ paste it into yours.
 | `Home` `End` | first / last row |
 | `Enter` | open the focused record in this panel |
 | `⌘Enter` | open it in the side panel |
-| `Shift+Enter` | create a record and name it in place |
-| `Space` | peek the focused record in the side panel; `Space` again to dismiss |
-| `E` | open the focused record's properties for editing |
+| `Shift+Enter` | create a record and open its name for typing right there in the tree, instead of navigating off to a new page. Leave it unnamed and it's discarded |
+| `Space` | peek the focused record in the side panel. Keep arrowing and the panel follows the selection, so you can skim a branch without committing to any of it. If you already had something open on the side, the peek borrows that panel and puts it back when it ends |
+| ↳ `Space` `Escape` | dismiss the peek |
+| ↳ `Enter` `⌘Enter` | commit it — the peek becomes a real open and takes focus |
+| `E` | property mode: the focused record's fields open as a list underneath it. Not just the row's chips — it's Title, then the chips, then every other editable field. That includes the parent, so you can re-hang a branch of the tree without opening the record |
+| ↳ `↑` `↓` | move between fields |
+| ↳ `Enter` | edit the highlighted field. Text and number get an inline box; choice and record-link get a filter menu, with the row's own descendants left out so you can't make a loop |
+| ↳ `Escape` `E` | leave property mode |
 | `/` | jump to the search box |
-| `Escape` | close a peek, or leave property mode |
 | Click | open the record; `⌘`-click or middle-click opens it aside; `Shift`-click just focuses |
-
-Three of those do more than the one-liner suggests.
-
-### `E` — edit properties in place
-
-The focused record's fields open as an indented list underneath it. `↑`/`↓` walk
-them, `Enter` edits the highlighted one, `Escape` or `E` again closes. Text,
-number, choice and record-link fields are all editable, and choices and links get
-the same filter menu the sort button uses.
-
-The list isn't limited to the properties shown on the row — it's Title, then the
-row's chips, then every other editable field. That includes the parent, so you
-can re-hang a whole branch of the tree without ever opening the record. The
-picker leaves out the row's own descendants, so you can't accidentally make a
-loop.
-
-### `Space` — peek
-
-Opens the focused record in the side panel. Keep arrowing and the panel follows
-the selection, so you can skim a branch without committing to any of it.
-`Space` again or `Escape` dismisses; `Enter` or `⌘Enter` turns the peek into a
-real open and moves focus there.
-
-If you already had something open in the side panel, the peek borrows it and
-puts it back on whatever it was showing when you dismiss — it doesn't close a
-panel you opened yourself.
-
-### `Shift+Enter` — create in place
-
-Adds a record and opens its name for typing right there in the tree, rather than
-navigating you off to a new blank page. Walk away without naming it and it's
-discarded, the same as an untouched new card in Thymer's own views.
 
 ## Known limits
 
