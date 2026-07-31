@@ -790,16 +790,15 @@ class Plugin extends CollectionPlugin {
 			 * of a card's property list too), then the properties the row already
 			 * shows as chips, minus the types there is no editor for.
 			 *
-			 * `parent_page` is in the skip list, so the sub-page link cannot be edited
-			 * from E-mode — reparenting a sub-page happens on the record page. A
-			 * HAND-MADE self-pointing record field is not skipped and is editable
-			 * here, so whether the tree can be re-hung from the outline depends on
-			 * which kind of hierarchy field the collection uses. (Skipping
-			 * `parent_page` also makes the `setSubPageOf()` branch in the record
-			 * editor unreachable; it is kept for the day the field is let back in.)
+			 * The hierarchy field is deliberately NOT skipped, whether it is
+			 * `parent_page` or a hand-made one: re-hanging a branch is the edit an
+			 * outline is for. `parent_page` was in the skip list from the commit that
+			 * added E-mode, back when the tree came from a hand-made `Parent` field
+			 * and the sub-page field was unused; moving the hierarchy onto
+			 * `parent_page` turned that skip into a silent regression.
 			 */
 			const EDITABLE_TYPES = ['text', 'number', 'choice', 'record'];
-			const EDIT_SKIP_IDS = ['title', 'icon', 'collection', 'parent_page'];
+			const EDIT_SKIP_IDS = ['title', 'icon', 'collection'];
 			const editableFields = () => {
 				const canEdit = f => f && f.active !== false && !f.read_only
 					&& EDITABLE_TYPES.includes(f.type) && !EDIT_SKIP_IDS.includes(f.id);
