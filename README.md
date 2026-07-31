@@ -1,30 +1,22 @@
 # Outline view for Thymer
 
-A custom collection view that shows your records as an indented, collapsible tree instead of a flat list. Modeled on Thymer's native List view. It works on any self-referencing collection. Nothing in it is specific to one collection. Nesting comes from sub-pages.
+A collection view that shows your records as an indented, collapsible tree instead of a flat list, modeled on Thymer's List view. It works on any collection with a property that references itself. 
 
 ## Features
 
-- A real tree. Indented rows, one toggle per parent, collapse state remembered
+- **A real tree.** Indented rows, one toggle per parent, collapse state remembered
   per device.
-- Search that keeps its place. Filtering matches record names and every visible
+- **Search that keeps its place.** Filtering matches record names and every visible
   property, and keeps a hit's parents on screen so you can see where in the tree
   it lives. Arrow keys drive the list while you're still typing.
-- Your properties on the rows. Whichever properties the view is set to show
+- **Row properties.** Whichever properties the view is set to show
   appear as chips — choices as colored pills, links as clickable chips. Chips
-  line up in a right-hand column, and drop to a second line only when the name
-  needs the room.
-- Edit in place, with `E`. The focused record's fields open underneath it.
-  `↑`/`↓` to pick one, `Enter` to edit, `Escape` to close. Text, number, choice
-  and record-link fields are all editable, including the parent, so you can
-  re-hang a branch of the tree without opening the record.
-- Peek, with `Space`. Opens the focused record in the side panel, and the panel
-  follows as you keep arrowing. `Enter` turns the peek into a real open. If you
-  already had something open on the side, it's put back when the peek ends.
-- Create in place. `Shift+Enter` adds a record and opens its name for typing
-  right there in the tree, instead of jumping you to a new blank page. Walk away
-  without naming it and it's discarded.
-- A working toolbar. Thymer doesn't give custom views the usual toolbar, so this
+  line up in a right-hand column, and wrap to a second line when space is limited.
+- **A working toolbar.** Thymer doesn't give custom views the usual toolbar, so this
   rebuilds it: view tabs, a create button, sort field and direction.
+- **So many shortcuts.** You'll forget this isn't a built-in view. Peek a branch
+  with `Space`, edit properties in place with `E`, create without leaving the
+  tree. See [Keys](#keys).
 
 ## Install
 
@@ -78,8 +70,8 @@ paste it into yours.
 | key | does |
 |---|---|
 | `↑` `↓` | move between rows; `↑` from the top row goes to the search box |
-| `←` `→` | cycle through rows (Thymer uses these for panels elsewhere, so they're taken over here) |
-| `⌘↑` `⌘↓` | collapse / expand the focused node (`Ctrl` on Windows/Linux) |
+| `←` `→` | cycle through rows or buttons on the toolbar |
+| `⌘↑` `⌘↓` | collapse / expand the focused node (`Ctrl` on Windows/Linux) if possible; falls back to `↑` `↓` |
 | `Home` `End` | first / last row |
 | `Enter` | open the focused record in this panel |
 | `⌘Enter` | open it in the side panel |
@@ -88,12 +80,43 @@ paste it into yours.
 | `E` | open the focused record's properties for editing |
 | `/` | jump to the search box |
 | `Escape` | close a peek, or leave property mode |
-| click | open the record; `⌘`-click or middle-click opens it aside; `Shift`-click just focuses |
+| Click | open the record; `⌘`-click or middle-click opens it aside; `Shift`-click just focuses |
+
+Three of those do more than the one-liner suggests.
+
+### `E` — edit properties in place
+
+The focused record's fields open as an indented list underneath it. `↑`/`↓` walk
+them, `Enter` edits the highlighted one, `Escape` or `E` again closes. Text,
+number, choice and record-link fields are all editable, and choices and links get
+the same filter menu the sort button uses.
+
+The list isn't limited to the properties shown on the row — it's Title, then the
+row's chips, then every other editable field. That includes the parent, so you
+can re-hang a whole branch of the tree without ever opening the record. The
+picker leaves out the row's own descendants, so you can't accidentally make a
+loop.
+
+### `Space` — peek
+
+Opens the focused record in the side panel. Keep arrowing and the panel follows
+the selection, so you can skim a branch without committing to any of it.
+`Space` again or `Escape` dismisses; `Enter` or `⌘Enter` turns the peek into a
+real open and moves focus there.
+
+If you already had something open in the side panel, the peek borrows it and
+puts it back on whatever it was showing when you dismiss — it doesn't close a
+panel you opened yourself.
+
+### `Shift+Enter` — create in place
+
+Adds a record and opens its name for typing right there in the tree, rather than
+navigating you off to a new blank page. Walk away without naming it and it's
+discarded, the same as an untouched new card in Thymer's own views.
 
 ## Known limits
 
-These come from parts of Thymer's plugin API that aren't open yet, not from
-choices made here:
+Some parts of Thymer's plugin API that aren't open yet, so custom views can't mimic or alter every feature available to built-in views:
 
 - No drag-to-reorder and no move mode (`M`). The per-view custom order isn't
   writable from a plugin, so "Custom Order" isn't offered as a sort either.
