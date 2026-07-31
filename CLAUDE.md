@@ -304,11 +304,25 @@ enableSubPages(e){ ... if(e&&!s) i.fields.push({id:et,label:"Sub-page of",many:!
                    else if(!e&&s) i.fields=i.fields.filter(n=>n.id!==et) ... }
 ```
 
-Two things follow. **Disabling sub-pages deletes the field** rather than
-deactivating it, so it is not the reversible toggle "enable/disable" suggests.
-And **`hierarchyFieldId()`'s first line is the app's own test**, character for
+**`hierarchyFieldId()`'s first line is the app's own test**, character for
 character — `collection.hasSubPages()` exists on the SDK's collection API and
 says the same thing, so prefer it if that line is ever touched.
+
+Disabling deletes the field from the config rather than deactivating it, but
+that is a schema change only: **the stored parent values survive and come back
+intact.** Round-tripped live on Organizations 2026-07-30 — filtered
+`parent_page` out of the config, confirmed the records no longer carried a
+`Sub-page of` property, pushed the field back, and all 5 links returned pointing
+at the same records. Two details from that run:
+
+- **The app normalizes the field.** `enableSubPages(true)` pushes it *without*
+  `filter_colguid`; the live config comes back with
+  `filter_colguid: <this collection>` added. So the restriction is applied by
+  the app, not carried in the write.
+- **Re-adding appends it to the end of the field order.** Harmless for the view
+  (`parent_page` is found by id, and E-mode's trailing block is unordered
+  anyway), but it moves the property's position on the record page, so restoring
+  an exact prior config means restoring the order too.
 
 What that run established, all of it verified rather than assumed:
 
