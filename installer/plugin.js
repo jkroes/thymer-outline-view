@@ -32,7 +32,10 @@ const SUBPAGE_FIELD = {
 	many: false, read_only: false, active: true, type: 'record',
 };
 
-/** The view entry install() writes. Uninstall removes only views matching it. */
+/**
+ * The view entry install() writes, before its per-view bits are filled in.
+ * Uninstall removes only views matching isOurView().
+ */
 const VIEW_ENTRY = {
 	id: 'outline', label: 'Outline', type: 'custom',
 	icon: 'ti-list-tree', shown: true, description: '', query: '',
@@ -40,8 +43,53 @@ const VIEW_ENTRY = {
 	group_by_field_id: null, sort_field_id: 'title', sort_dir: 'asc',
 };
 
+/**
+ * Ours if it carries a hierarchy binding — that key is written by nothing else —
+ * or if it matches the single fixed id/label installs used before bindings
+ * existed, so an older install is still recognised and removable.
+ */
 const isOurView = (v) => v.type === 'custom'
-	&& (v.id === VIEW_ENTRY.id || v.label === VIEW_ENTRY.label);
+	&& (!!(v.opts && v.opts.hierarchy_field_id)
+		|| v.id === VIEW_ENTRY.id || v.label === VIEW_ENTRY.label);
+
+/**
+ * View ids are silently sanitized — `_H(o) = o.replace(/[^a-zA-Z0-9_]/g, "")`
+ * runs over every one, deleting hyphens, spaces and dots without warning. So the
+ * id is built already-sanitized rather than discovering later that it was
+ * rewritten. Ids only need to be unique within one collection.
+ */
+const viewIdFor = (fieldId) => ('outline_' + fieldId).replace(/[^a-zA-Z0-9_]/g, '');
+
+/**
+ * Sub-pages are the collection's default hierarchy, so their view is just
+ * "Outline"; anything else is named after the property it draws.
+ */
+const labelFor = (field) => field.id === 'parent_page' ? 'Outline' : `Outline: ${field.label}`;
+
+/**
+ * A label this installer generated, as opposed to one the user typed. Only these
+ * are re-synced when a property is renamed — a view you named yourself keeps the
+ * name you gave it.
+ *
+ * Restricted to the `Outline: ` form on purpose. The bare "Outline" belongs to
+ * sub-pages, whose label never changes, and matching it would mean renaming any
+ * view that happens to be called that.
+ */
+const isGeneratedLabel = (label) => /^Outline: /.test(label || '');
+
+/**
+ * The properties a hierarchy can be read from — the same test the view makes.
+ * Single-valued record links pointing back at this same collection: a
+ * multi-valued link would give a record several parents, and a link to another
+ * collection points at records this collection's views never see.
+ */
+const hierarchyCandidates = (api) => {
+	const guid = api.getGuid();
+	return (api.getConfiguration().fields || []).filter(f => f.type === 'record'
+		&& f.active !== false
+		&& f.many !== true
+		&& (f.id === 'parent_page' || f.filter_colguid === guid));
+};
 
 const isStub = (code) => !code
 	|| !code.trim()
@@ -102,17 +150,13 @@ class Plugin extends AppPlugin {
 	}
 
 	/**
-	 * A hand-made record property pointing back at its own collection — the other
-	 * way a collection can nest. `parent_page` is excluded so the two are real
-	 * alternatives: it satisfies this test too, and letting it match here would
-	 * describe a sub-pages collection as using a property of your own.
+	 * Hand-made record properties pointing back at their own collection — the
+	 * other way a collection can nest. `parent_page` is excluded so the two are
+	 * real alternatives: it satisfies the candidate test too, and letting it match
+	 * here would describe a sub-pages collection as using a property of your own.
 	 */
-	selfRefField(api) {
-		const guid = api.getGuid();
-		return (api.getConfiguration().fields || []).find(f => f.type === 'record'
-			&& f.id !== 'parent_page'
-			&& f.active !== false
-			&& f.filter_colguid === guid) || null;
+	selfRefFields(api) {
+		return hierarchyCandidates(api).filter(f => f.id !== 'parent_page');
 	}
 
 	customViews(api) {
@@ -121,6 +165,56 @@ class Plugin extends AppPlugin {
 
 	ourViews(api) {
 		return (api.getConfiguration().views || []).filter(isOurView);
+	}
+
+	/**
+	 * The property a view of ours draws, resolved the same way the view resolves
+	 * it: its binding, else sub-pages, else the first self-referencing property.
+	 * An unbound view is a pre-bindings install, and reconcile adopts it by
+	 * writing the binding it was already behaving as if it had.
+	 */
+	boundFieldId(api, view) {
+		if (view.opts && view.opts.hierarchy_field_id) return view.opts.hierarchy_field_id;
+		const candidates = hierarchyCandidates(api);
+		if (candidates.some(f => f.id === 'parent_page')) return 'parent_page';
+		return candidates.length ? candidates[0].id : null;
+	}
+
+	/**
+	 * What Install would change: which eligible properties have no view, and which
+	 * of our views point at a property that no longer exists.
+	 */
+	plan(api) {
+		const candidates = hierarchyCandidates(api);
+		const ours = this.ourViews(api);
+		const taken = new Set();
+		const orphaned = [];
+		// Views whose property was renamed, so the generated label no longer says
+		// what the view draws. The binding is by field id, so these still work —
+		// only the name is wrong.
+		const stale = [];
+		for (const view of ours) {
+			const fieldId = this.boundFieldId(api, view);
+			if (fieldId && candidates.some(f => f.id === fieldId)) {
+				taken.add(fieldId);
+				const field = candidates.find(f => f.id === fieldId);
+				const label = labelFor(field);
+				if (view.label !== label && isGeneratedLabel(view.label)) {
+					stale.push({ view, label });
+				}
+			} else {
+				orphaned.push(view);
+			}
+		}
+		return {
+			candidates,
+			missing: candidates.filter(f => !taken.has(f.id)),
+			orphaned,
+			stale,
+			// Views that work but predate bindings, so reconcile writes theirs in.
+			unbound: ours.filter(v => !(v.opts && v.opts.hierarchy_field_id)
+				&& !orphaned.includes(v)),
+		};
 	}
 
 	/**
@@ -138,22 +232,50 @@ class Plugin extends AppPlugin {
 	}
 
 	status(api) {
+		const plan = this.plan(api);
 		return {
 			guid: api.getGuid(),
 			name: api.getName(),
-			nests: this.hasSubPages(api) || !!this.selfRefField(api),
+			nests: !!plan.candidates.length,
 			subPages: this.hasSubPages(api),
+			selfRef: this.selfRefFields(api).length,
+			candidates: plan.candidates,
+			missing: plan.missing,
+			orphaned: plan.orphaned,
+			unbound: plan.unbound,
+			stale: plan.stale,
 			views: this.customViews(api).length,
 			ours: this.ourViews(api).length,
 			code: this.codeState(api),
 		};
 	}
 
+	/**
+	 * A sanitizer-safe view id not already in use. Ids collide when two properties
+	 * sanitize to the same string, and a duplicate id would make views.register()
+	 * and the tab switcher pick whichever comes first.
+	 */
+	freeViewId(conf, fieldId) {
+		const taken = new Set((conf.views || []).map(v => v.id));
+		const base = viewIdFor(fieldId);
+		if (!taken.has(base)) return base;
+		let n = 2;
+		while (taken.has(`${base}_${n}`)) n++;
+		return `${base}_${n}`;
+	}
+
 	// --- actions ------------------------------------------------------------
 
 	/**
-	 * Steps are idempotent: re-installing a half-installed collection finishes it
-	 * rather than duplicating anything.
+	 * Install is a RECONCILE, not an add: it brings the collection to one Outline
+	 * view per eligible nesting property — creating the ones that are missing and
+	 * deleting the ones whose property no longer exists — then writes the code.
+	 * Running it twice changes nothing the second time.
+	 *
+	 * That makes the property the source of truth and the view derived from it.
+	 * The consequence to be aware of: deleting a view is not durable, since the
+	 * next reconcile puts it back. Deleting the property is how you get rid of a
+	 * view for good.
 	 */
 	async install(guid, log) {
 		let api = this.resolve(guid);
@@ -172,23 +294,61 @@ class Plugin extends AppPlugin {
 		}
 
 		const conf = api.getConfiguration();
-		const needsNesting = !this.hasSubPages(api) && !this.selfRefField(api);
-		const needsView = !this.customViews(api).length;
 
-		// Both config changes go in ONE save. Writes are not readable in the same
-		// tick, so calling enableSubPages() and then re-reading the config returns
-		// the copy from BEFORE it — saving that back silently drops the sub-page
+		// Nesting is provisioned only when the collection has NO way to nest at
+		// all. A collection that already nests through a property of its own is
+		// left alone — adding sub-pages there would invent a second hierarchy and
+		// a second view nobody asked for.
+		const needsNesting = !hierarchyCandidates(api).length;
+		if (needsNesting) {
+			log('Turning on sub-pages...');
+			conf.fields = (conf.fields || []).concat([Object.assign({}, SUBPAGE_FIELD)]);
+		}
+
+		// Reconcile against the config being built, not the live one: with
+		// sub-pages just appended above, `parent_page` is a candidate for this
+		// save even though the collection does not have it yet.
+		const pending = { getGuid: () => guid, getConfiguration: () => conf };
+		const plan = this.plan(pending);
+
+		// A view from before bindings existed is adopted rather than duplicated:
+		// without this, reconcile would see `parent_page` as unclaimed and add a
+		// second view alongside the one already drawing it.
+		for (const view of plan.unbound) {
+			const fieldId = this.boundFieldId(pending, view);
+			if (!fieldId) continue;
+			view.opts = Object.assign({}, view.opts, { hierarchy_field_id: fieldId });
+		}
+
+		if (plan.orphaned.length) {
+			log(`Removing ${plan.orphaned.length} view(s) whose property is gone...`);
+			conf.views = (conf.views || []).filter(v => !plan.orphaned.includes(v));
+		}
+
+		// Only labels this installer generated are re-synced, so a view you renamed
+		// yourself keeps your name. The view kept working through the rename either
+		// way — the binding is by field id — so this is cosmetic.
+		for (const { view, label } of plan.stale) {
+			log(`Renaming "${view.label}" to "${label}"...`);
+			view.label = label;
+		}
+
+		for (const field of plan.missing) {
+			log(`Adding a view for "${field.label}"...`);
+			conf.views = (conf.views || []).concat([Object.assign({}, VIEW_ENTRY, {
+				id: this.freeViewId(conf, field.id),
+				label: labelFor(field),
+				opts: { hierarchy_field_id: field.id },
+			})]);
+		}
+
+		// Every config change goes in ONE save. Writes are not readable in the same
+		// tick, so appending the sub-page field and then re-reading the config
+		// returns the copy from BEFORE it — saving that back silently drops the
 		// field again, which is exactly how a collection ends up with the view
 		// installed and no nesting.
-		if (needsNesting || needsView) {
-			if (needsNesting) {
-				log('Turning on sub-pages...');
-				conf.fields = (conf.fields || []).concat([Object.assign({}, SUBPAGE_FIELD)]);
-			}
-			if (needsView) {
-				log('Adding a Custom view...');
-				conf.views = (conf.views || []).concat([Object.assign({}, VIEW_ENTRY)]);
-			}
+		if (needsNesting || plan.orphaned.length || plan.missing.length
+			|| plan.unbound.length || plan.stale.length) {
 			// A refused save is reported as a refusal. saveConfiguration() returns
 			// false when the user lacks permission on this collection — it does not
 			// throw — so an unchecked call reports success and writes nothing.
@@ -308,16 +468,28 @@ class Plugin extends AppPlugin {
 		title.style.cssText = 'font-weight:600;';
 
 		const bits = [];
-		bits.push(s.subPages ? 'sub-pages on'
-			: s.nests ? 'nests via a self-linking property'
-			: 'no nesting yet');
-		bits.push(s.views ? `${s.views} custom view(s)` : 'no custom view');
+		if (!s.candidates.length) bits.push('no nesting yet');
+		else bits.push(`${s.candidates.length} nesting propert${s.candidates.length === 1 ? 'y' : 'ies'}`
+			+ (s.subPages ? s.selfRef ? ' (sub-pages + your own)' : ' (sub-pages)' : ' (your own)'));
+		bits.push(s.ours ? `${s.ours} Outline view(s)` : 'no Outline view');
 		bits.push(s.code === 'current' ? 'view installed'
 			: s.code === 'outdated' ? 'older version installed'
 			: s.code === 'free' ? 'plugin slot empty'
 			: 'has other plugin code');
 		const meta = el('div', left, bits.join(' \u00b7 '));
 		meta.style.cssText = 'font-size:12px;opacity:.7;margin-top:2px;';
+
+		// The delta Install would apply, so the button's effect is legible before
+		// it is pressed.
+		const delta = [];
+		if (s.missing.length) delta.push(`${s.missing.length} view(s) to add: `
+			+ s.missing.map(f => f.label).join(', '));
+		if (s.orphaned.length) delta.push(`${s.orphaned.length} view(s) to remove — their property is gone`);
+		if (s.stale.length) delta.push(`${s.stale.length} view(s) to rename — their property was renamed`);
+		if (delta.length && s.code !== 'occupied') {
+			const line = el('div', left, delta.join(' · '));
+			line.style.cssText = 'font-size:12px;margin-top:4px;opacity:.85;';
+		}
 
 		if (s.code === 'occupied') {
 			const warn = el('div', left, 'Installing here opens the code editor so you can merge by hand. Your code is not overwritten.');
@@ -357,8 +529,12 @@ class Plugin extends AppPlugin {
 		// when there is nothing to do — a button whose only outcome is "already up
 		// to date" is worse than no button.
 		const ours = s.code === 'current' || s.code === 'outdated';
-		const present = s.views > 0 && ours;
-		const complete = present && s.nests && s.code === 'current';
+		const present = s.ours > 0 && ours;
+		// Complete means there is nothing left to reconcile: a view per eligible
+		// property, none orphaned, none unbound, and the code current.
+		const complete = present && s.nests && s.code === 'current'
+			&& !s.missing.length && !s.orphaned.length && !s.unbound.length
+			&& !s.stale.length;
 
 		if (!complete) {
 			run(s.code === 'outdated' ? 'Update' : present ? 'Repair' : 'Install',

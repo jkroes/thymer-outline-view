@@ -92,6 +92,28 @@ function buildHierarchy(records, parentFieldId) {
 	return { nodes, rootNodes };
 }
 
+/**
+ * The properties a hierarchy can be read from: a record link, active, single
+ * valued, pointing back at this same collection.
+ *
+ * Multi-valued links are excluded because they give a record several parents —
+ * a graph, not a tree — and a record would have to appear in more than one
+ * place, which the guid-keyed collapse state and selection both assume it never
+ * does. Links to a DIFFERENT collection are excluded because their targets are
+ * not in this collection's record set, so they can't nest anything here; that
+ * is a grouping, not an outline.
+ *
+ * `parent_page` is accepted whether or not it carries `filter_colguid`: the app
+ * fills that in itself, so a config read in the same tick as the write that
+ * added the field does not have it yet.
+ */
+function hierarchyCandidates(fields, collectionGuid) {
+	return (fields || []).filter(field => field.type === 'record'
+		&& field.active !== false
+		&& field.many !== true
+		&& (field.id === 'parent_page' || field.filter_colguid === collectionGuid));
+}
+
 class Plugin extends CollectionPlugin {
 
 	onLoad() {
@@ -121,7 +143,10 @@ class Plugin extends CollectionPlugin {
 			const ui = this.ui;
 			const plugin = this;
 			const collectionGuid = () => plugin.collection.getGuid();
-			const storageKey = `outline-collapsed:${this.getConfiguration().name}`;
+			// Per VIEW, not per collection: two Outline views over different
+			// properties are different trees, so a shared key would have
+			// collapsing a row in one collapse an unrelated row in the other.
+			const storageKey = `outline-collapsed:${this.getConfiguration().name}:${viewId}`;
 
 			/** guids the user has collapsed; persisted per device */
 			let collapsed = new Set();
@@ -172,21 +197,48 @@ class Plugin extends CollectionPlugin {
 			};
 
 			/**
-			 * The field the tree is read from: the collection's own sub-page link if
-			 * sub-pages are on, otherwise the first record field pointing back at this
-			 * collection. `parent_page` is what `collection.enableSubPages(true)`
-			 * provisions — a plain record field labelled "Sub-page of", filtered to
-			 * this collection — so it needs no special handling to READ. Writes go
-			 * through setSubPageOf(), which is what refuses cycles.
+			 * The property THIS view draws its tree from, and whether the one it was
+			 * told to draw has gone missing.
+			 *
+			 * The binding lives in the view's own config entry, under
+			 * `opts.hierarchy_field_id` — verified to survive the app's
+			 * collection-settings screen, so editing the view in the UI does not
+			 * erase it. That is what lets one collection carry several Outline
+			 * views, each over a different self-referencing property.
+			 *
+			 * With no binding the old collection-wide behavior stands: sub-pages if
+			 * present, else the first self-referencing property. That keeps views
+			 * predating this — and any custom view a user adds by hand — working.
+			 *
+			 * A binding pointing at a property that is gone reports `orphaned`
+			 * instead of silently falling back. Falling back would leave a view
+			 * labelled for one property quietly drawing another, with nothing on
+			 * screen saying so. The installer's reconcile is what clears these up;
+			 * until it runs the view says what happened and lists rows flat.
+			 *
+			 * `parent_page` is what `collection.enableSubPages(true)` provisions — a
+			 * plain record field labelled "Sub-page of", filtered to this collection
+			 * — so it needs no special handling to READ. Writes go through
+			 * setSubPageOf(), which is what refuses cycles.
 			 */
-			const hierarchyFieldId = () => {
-				const fields = plugin.getConfiguration().fields || [];
-				if (fields.some(f => f.id === 'parent_page' && f.active !== false)) return 'parent_page';
-				const self = fields.find(f => f.type === 'record'
-					&& f.active !== false
-					&& f.filter_colguid === collectionGuid());
-				return self ? self.id : null;
+			const hierarchyBinding = () => {
+				const conf = plugin.getConfiguration();
+				const candidates = hierarchyCandidates(conf.fields, collectionGuid());
+				const view = (conf.views || []).find(v => v.id === viewId);
+				const bound = view && view.opts ? view.opts.hierarchy_field_id : null;
+				if (bound) {
+					const field = candidates.find(f => f.id === bound);
+					if (field) return { fieldId: field.id, orphaned: null };
+					return { fieldId: null, orphaned: bound };
+				}
+				if (candidates.some(f => f.id === 'parent_page')) {
+					return { fieldId: 'parent_page', orphaned: null };
+				}
+				const self = candidates.find(f => f.id !== 'parent_page');
+				return { fieldId: self ? self.id : null, orphaned: null };
 			};
+
+			const hierarchyFieldId = () => hierarchyBinding().fieldId;
 
 			const choiceColorsFor = (field) => {
 				const map = {};
@@ -202,13 +254,14 @@ class Plugin extends CollectionPlugin {
 				return nav && nav.type === 'overview' && nav.rootId === collectionGuid();
 			}) || null;
 
+			// Falls back to the id this closure was registered against, which IS this
+			// view — the old fallback looked for a view literally called `outline`,
+			// which was wrong the moment a collection had more than one of them.
 			const currentViewId = () => {
 				const panel = ownPanel();
 				const nav = panel ? panel.getNavigation() : null;
 				if (nav && nav.subId) return nav.subId;
-				const views = plugin.getConfiguration().views || [];
-				const mine = views.find(v => v.id === 'outline');
-				return mine ? mine.id : null;
+				return viewId;
 			};
 
 			const currentView = () => {
@@ -799,6 +852,18 @@ class Plugin extends CollectionPlugin {
 				));
 
 				$toolbar.appendChild($actions);
+
+				// A view whose property was deleted says so rather than passing for a
+				// working outline that happens to be flat. Transient by design: the
+				// installer's reconcile removes orphaned views.
+				const orphaned = hierarchyBinding().orphaned;
+				if (orphaned) {
+					const $note = document.createElement('div');
+					$note.className = 'outline-tb-note';
+					$note.textContent = 'The property this view nested by is gone, so rows are flat. '
+						+ 'Run "Outline: install into a collection..." to clean this up.';
+					$toolbar.appendChild($note);
+				}
 			};
 
 			// --- inline editing --------------------------------------------------
@@ -1344,6 +1409,15 @@ class Plugin extends CollectionPlugin {
 							align-items: center;
 							gap: 8px;
 							min-height: 34px;
+							/* So the orphan note can take a line of its own. With
+							   nothing but the tabs and the actions there is nothing
+							   to wrap, so this changes no existing layout. */
+							flex-wrap: wrap;
+						}
+						.outline-tb-note {
+							flex: 0 0 100%;
+							font-size: 12px;
+							color: var(--enum-orange-fg, #c60);
 						}
 						.outline-tb-views {
 							display: flex;
