@@ -507,6 +507,26 @@ Untested: a view arriving by sync from another device or collaborator, which
 reaches the config without a local save. If that ever needs to work, a
 `collection.updated` subscription that re-registers is the lever.
 
+**A view entry carries unrecognized keys through the settings screen.** Verified
+live on Organizations 2026-07-31: a key inside a custom view's `opts`
+(`opts.hierarchy_field_id`) and a bare key on the view entry itself
+(`outline_probe`) were both written over MCP, then the view was edited in the
+app's collection-settings screen (its visible columns changed) and saved. The
+edit landed and both keys came back untouched. So per-view plugin settings can
+live in the view entry, which is where this view records **which property it
+draws** — see "One view per property" below. `opts` is the better of the two
+homes: the app already treats it as a bag of view settings, so a future key of
+its own is less likely to collide there than at the top level.
+
+The `_H()` sanitizer rewrites view **ids** but leaves the rest of the entry
+alone.
+
+One side effect from that run, unrelated to the probe: saving the settings
+screen **appended an `icon` text field** to the collection's `fields` array,
+which was not there before. The app provisions it; a config writer should expect
+fields it did not add to appear after any settings save, which is one more
+reason to patch what you just read rather than push a remembered config.
+
 **Custom views get no toolbar and no search row.** The host is a bare
 `<div class='custom-view'>` and declares `supportsViewFilterStatus() → false`.
 The whole `records-view-toolbar-inner` component — tabs, add view, create,
@@ -621,6 +641,94 @@ so the root carries that class to pick them up (the class itself is only
 `overflow: hidden`, which clips an absolutely-positioned dropdown down to a
 sliver. The app appends its dropdown to the panel root and positions it at the
 cursor; menus here do the same against `.outline-root`.
+
+## One view per property
+
+A collection can hold several self-referencing properties, and each one is a
+different hierarchy over the same records. The view draws one of them, chosen
+per VIEW rather than per collection, so a collection can carry an Outline for
+each.
+
+**The binding lives in the view's own config entry**, at
+`opts.hierarchy_field_id`. Verified to survive the app's collection-settings
+screen (see the undocumented-behavior note above), so editing a view in the UI
+does not erase which property it draws. It also travels with the view through a
+rename or an id rewrite, and disappears with the view when it is deleted.
+
+`hierarchyBinding()` resolves in this order:
+
+1. the view's `opts.hierarchy_field_id`
+2. `parent_page` — the sub-page link
+3. the first other eligible property
+
+Steps 2 and 3 are the pre-bindings behavior, kept so a view installed before
+this, or one a user adds by hand, still works with no binding at all.
+
+**Eligible means single-valued, active, and pointing back at this collection**
+(`hierarchyCandidates()`, duplicated in the installer since plugins can't share
+code). Multi-valued record links are excluded: they give a record several
+parents, so it would have to appear in more than one place, and both the
+guid-keyed collapse state and the selection assume it appears exactly once.
+Links to a *different* collection are excluded because their targets are not in
+this collection's record set — nesting by one is a grouping, not an outline.
+
+**A binding pointing at a deleted property does not fall back.** It reports
+`orphaned`, the rows render flat, and the toolbar says so. Falling back to
+sub-pages would leave a view labelled for one property quietly drawing another
+with nothing on screen admitting it. The state is transient: the installer's
+reconcile deletes orphaned views.
+
+**Collapse state is keyed per view** (`outline-collapsed:<collection>:<viewId>`).
+Two outlines over different properties are different trees; a shared key made
+collapsing a row in one collapse an unrelated row in the other.
+
+### Reconcile
+
+**Verified end to end on Organizations, 2026-07-31.** With `parent_page`, a
+hand-made `Reports to`, and one pre-bindings `outline` view: Repair adopted the
+existing view (binding written to `parent_page`, columns and label untouched, no
+duplicate) and added `outline_FRPRTSTO0000001` / "Outline: Reports to" bound to
+the new property, both trees rendering their own shape. Deleting `Reports to`
+left its view flat with the toolbar note; the next Repair removed that view and
+left the other alone. Label re-sync was checked the same way: a view carrying a
+stale generated label and a hand-named view, both bound to the same renamed
+property — Repair renamed the first and left the second alone.
+
+The installer's Install is a reconcile, not an add. It brings a collection to
+one Outline view per eligible property: creating views for properties that have
+none, deleting views whose property is gone, and writing a binding into views
+that predate bindings. Running it twice changes nothing the second time.
+
+So **the property is the source of truth and the view is derived from it.** The
+consequence, which is deliberate: deleting a view is not durable — the next
+reconcile puts it back. Deleting the property is how a view goes away for good.
+That is why there is no checklist of which properties to install; there is no
+per-collection preference to remember, and nothing to keep in sync with the
+schema.
+
+**Naming.** Sub-pages are a collection's default hierarchy, so their view is
+just `Outline`; every other property's view is `Outline: <property label>`.
+
+Reconcile re-syncs a label whose property was renamed, but **only labels it
+generated itself** — the `Outline: ` form, matched by `isGeneratedLabel()`. A
+view you renamed by hand keeps your name. The bare `Outline` is deliberately not
+matched: it belongs to sub-pages, whose label never changes, and matching it
+would rename any view that happens to be called that. Nothing about this is
+load-bearing — the binding is by field id, so a renamed property never breaks a
+view, it only leaves the name saying the wrong thing.
+
+An unbound view of ours is **adopted**, not duplicated. Without that step
+reconcile would see `parent_page` as unclaimed and add a second view next to the
+one already drawing it.
+
+Nesting is provisioned (`parent_page` appended) only when the collection has no
+eligible property at all. A collection that already nests through a property of
+its own is left alone — adding sub-pages there would invent a second hierarchy,
+and then a second view, that nobody asked for.
+
+`isOurView()` now matches on the binding's presence first, since nothing else
+writes that key, and falls back to the old fixed id/label so pre-bindings
+installs are still recognised and removable.
 
 ## Gotchas in this code
 
