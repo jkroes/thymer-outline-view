@@ -19,39 +19,68 @@ A collection view that shows your records as an indented, collapsible tree inste
 
 ## Install
 
-Open a collection where you want this view, then go to its settings.
+Two ways: a global plugin that does it for you, or three steps by hand.
 
-### 1. Give the collection a way to nest
+### With the installer
 
-The tree is drawn from a record-link property that points back at the same
-collection. Turning on sub-pages is how you get one — it adds a "Sub-page of"
-property, and Thymer's own writes through that property refuse to create loops.
+`installer/dist/plugin.js` is a global plugin that sets up any collection for
+you. Install it once:
 
-A property you made yourself works just as well, so skip this step if the
-collection already nests. The view takes "Sub-page of" when the collection has
-it, and otherwise falls back to the first active record-link property whose
-target is this same collection. First means first in the collection's field
-order, and there is no way to choose, so keep it to one such property. If that
-property holds several links, only the first is read. See [Known limitations](#known-limits).
+1. Create a global plugin in Thymer's Plugins screen, named whatever you like.
+2. Paste in the whole of [`installer/dist/plugin.js`](installer/dist/plugin.js)
+   and save.
 
-Turning sub-pages back off removes the "Sub-page of" property from the
-collection, so the view loses that hierarchy and falls back to a self-pointing
-property if you have one. The links survive: turn sub-pages on again and every
-parent comes back exactly as it was.
+Then run **"Outline: install into a collection..."** from the command palette. A
+panel lists your collections, each with a line saying where it stands — whether
+it can nest, whether it has a Custom view, whether its plugin slot is free — and
+a button that says what it will do:
 
-### 2. Add a Custom view
+| Button | Meaning |
+|---|---|
+| Install | Nothing is set up yet. Turns on sub-pages if the collection has no way to nest, adds a Custom view, writes the view code. |
+| Repair | The view is there but a piece is missing, such as the nesting. Adds only what's absent and leaves your view's name, shown properties and sort alone. |
+| Update | An older build of the view is installed. Overwrites just the code. |
+| Remove | Takes out the Custom views and clears the code. Never touches sub-pages or your nesting — those hold real data. |
 
-In the collection's settings, add a view and choose the type **Custom**. Name it
-whatever you like.
+A collection that is complete and up to date shows "Installed" and offers only
+Remove.
 
-### 3. Paste in the code
+**If a collection already has plugin code of its own**, the installer will not
+overwrite it. Thymer gives each collection a single plugin, and writing code
+replaces whatever is there — so a collection with formulas or a custom record
+title would lose them. Those are flagged in the panel, and installing opens the
+code editor with the view's source loaded so you can merge it yourself. Nothing
+is written until you save.
 
-Open the collection's plugin code editor and paste in the whole of
-[`plugin.js`](plugin.js). Save.
+The view's source is baked into the installer when it's built, so installing
+doesn't fetch anything from the internet.
+
+### By hand
+
+1. **Give the collection a way to nest.** Turn on sub-pages, which adds a
+   "Sub-page of" property. A record-link property you made yourself that points
+   back at the same collection works too — skip this step if you already have
+   one.
+2. **Add a Custom view.** In the collection's settings, add a view of type
+   Custom and name it whatever you like.
+3. **Paste in the code.** Open the collection's plugin code editor, paste the
+   whole of [`plugin.js`](plugin.js), save.
 
 Open the view's tab and the tree renders. Nothing to configure — the plugin
-claims whatever custom views the collection has, so the view's name and id are
+claims whatever Custom views the collection has, so the view's name and id are
 yours to change freely.
+
+### Either way
+
+The tree is drawn from a record-link property pointing back at the same
+collection. "Sub-page of" is used when the collection has it; otherwise the
+first such property in field order is used, and there's no way to choose among
+several, so keep it to one. If that property holds several links, only the first
+is read.
+
+Turning sub-pages back off removes the "Sub-page of" property, so the view loses
+that hierarchy. The links survive: turn sub-pages on again and every parent
+comes back exactly as it was.
 
 To change which properties show on the rows, edit the view's shown fields the
 normal way and the rows follow.
