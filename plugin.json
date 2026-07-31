@@ -1,0 +1,297 @@
+{
+  "color": null,
+  "custom": {},
+  "description": "Notes",
+  "fields": [
+    {
+      "active": true,
+      "icon": "ti-abc",
+      "id": "title",
+      "label": "Title",
+      "many": false,
+      "read_only": false,
+      "type": "text"
+    },
+    {
+      "active": true,
+      "icon": "ti-clock-edit",
+      "id": "updated_at",
+      "label": "Modified",
+      "many": false,
+      "read_only": true,
+      "type": "datetime"
+    },
+    {
+      "active": true,
+      "icon": "ti-clock-plus",
+      "id": "created_at",
+      "label": "Created",
+      "many": false,
+      "read_only": true,
+      "type": "datetime"
+    },
+    {
+      "active": true,
+      "icon": "ti-photo",
+      "id": "banner",
+      "label": "Banner",
+      "many": false,
+      "read_only": false,
+      "type": "banner"
+    },
+    {
+      "active": true,
+      "choices": [
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-files",
+          "id": "1VAZZMCS2XD92BMVD02ZDN2AMM",
+          "label": "Paths"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-notes",
+          "id": "1K58ZV9Y7BH25ET1T529M7Z992",
+          "label": "Notes"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-book",
+          "id": "19VR4J8TQJY8JCFZHNJ23FPYR6",
+          "label": "References"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-notebook",
+          "id": "16S1WSXAWSHVHJZ72G6J3JRTCP",
+          "label": "Journal"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-bookmark",
+          "id": "1SKEH5FWA11D3FT2QXBPABN6JT",
+          "label": "Bookmarks"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-notes",
+          "id": "10186RGMMWCK4XZHTGCQT7TWQT",
+          "label": "Definitions"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-user",
+          "id": "1D7YAK7CCPDFANVK7X22F181WT",
+          "label": "People"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-briefcase",
+          "id": "1QMGNJ9T5XH7TDSPV6EN4VFX05",
+          "label": "Positions"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-bulb",
+          "id": "1PDRT2DZBMXDJS3BXEDVKK7SES",
+          "label": "Examples"
+        },
+        {
+          "active": true,
+          "color": "13",
+          "icon": "ti-building-skyscraper",
+          "id": "1NQTA7YSV5P6DH78568HJ827ZP",
+          "label": "Organizations"
+        }
+      ],
+      "icon": "ti-folders",
+      "id": "collection",
+      "label": "Collection",
+      "many": false,
+      "read_only": false,
+      "type": "choice"
+    },
+    {
+      "active": false,
+      "filter_colguid": "1NQTA7YSV5P6DH78568HJ827ZP",
+      "icon": "ti-align-left",
+      "id": "F2PW9BM2MJ5MSCA",
+      "label": "Parent",
+      "many": false,
+      "read_only": false,
+      "type": "record"
+    },
+    {
+      "active": true,
+      "choices": [
+        {
+          "active": true,
+          "color": "13",
+          "icon": "",
+          "id": "0BR8F4ZVSNQ1HG7",
+          "label": "Office"
+        },
+        {
+          "active": true,
+          "color": "4",
+          "icon": "",
+          "id": "07430CG2ZQK4PJ0",
+          "label": "Board"
+        },
+        {
+          "active": true,
+          "color": "0",
+          "icon": "",
+          "id": "0JE7ECNWJSBYG9H",
+          "label": "Agency"
+        },
+        {
+          "active": true,
+          "color": "8",
+          "icon": "",
+          "id": "07G9MKV4FZM7Q08",
+          "label": "Department"
+        },
+        {
+          "active": true,
+          "color": "12",
+          "icon": "",
+          "id": "0M4VA16AXEGF2MY",
+          "label": "Division"
+        },
+        {
+          "active": true,
+          "color": "1",
+          "icon": "",
+          "id": "0EVA6F0XF6X0ZES",
+          "label": "Branch"
+        },
+        {
+          "active": true,
+          "color": "5",
+          "icon": "",
+          "id": "0578CQ2MRZ4ADJN",
+          "label": "Program"
+        },
+        {
+          "active": true,
+          "color": "9",
+          "icon": "",
+          "id": "0816XZE08W0V3PV",
+          "label": "Section"
+        },
+        {
+          "active": true,
+          "color": "2",
+          "icon": "",
+          "id": "0771NBEJ3Q74QEV",
+          "label": "Company"
+        }
+      ],
+      "icon": "ti-align-left",
+      "id": "FYA00RYH9C11VZR",
+      "label": "Type",
+      "many": false,
+      "read_only": false,
+      "type": "choice"
+    },
+    {
+      "active": true,
+      "icon": "ti-align-left",
+      "id": "F18APEN0SDZMAJV",
+      "label": "Alias",
+      "many": false,
+      "read_only": false,
+      "type": "text"
+    },
+    {
+      "active": true,
+      "icon": "ti-align-left",
+      "id": "icon",
+      "label": "Icon",
+      "many": false,
+      "read_only": false,
+      "type": "text"
+    },
+    {
+      "active": true,
+      "filter_colguid": "1NQTA7YSV5P6DH78568HJ827ZP",
+      "icon": "ti-list-tree",
+      "id": "parent_page",
+      "label": "Sub-page of",
+      "many": false,
+      "read_only": false,
+      "type": "record"
+    }
+  ],
+  "home": false,
+  "icon": "ti-building-skyscraper",
+  "item_name": "Organization",
+  "managed": {
+    "fields": false,
+    "sidebar": false,
+    "views": false
+  },
+  "name": "Organizations",
+  "page_field_ids": [
+    "FYA00RYH9C11VZR",
+    "F18APEN0SDZMAJV"
+  ],
+  "property_pinned": [],
+  "property_set_default": "all",
+  "property_sets": [],
+  "property_style": "pills",
+  "show_cmdpal_items": true,
+  "show_sidebar_items": false,
+  "sidebar_display_mode": {
+    "mode": "hidden_records"
+  },
+  "sidebar_record_sort_dir": "desc",
+  "sidebar_record_sort_field_id": "updated_at",
+  "ver": 1,
+  "views": [
+    {
+      "description": "",
+      "field_ids": [
+        "title",
+        "F18APEN0SDZMAJV"
+      ],
+      "group_by_field_id": null,
+      "icon": "ti-list-tree",
+      "id": "outline",
+      "label": "Outline",
+      "opts": {},
+      "query": "",
+      "read_only": false,
+      "shown": true,
+      "sort_dir": "asc",
+      "sort_field_id": "title",
+      "type": "custom"
+    },
+    {
+      "description": "",
+      "field_ids": [
+        "FYA00RYH9C11VZR",
+        "F18APEN0SDZMAJV"
+      ],
+      "group_by_field_id": "updated_at",
+      "icon": "ti-list",
+      "id": "list",
+      "label": "List",
+      "read_only": false,
+      "shown": true,
+      "sort_dir": "desc",
+      "sort_field_id": "updated_at",
+      "type": "list"
+    }
+  ]
+}
