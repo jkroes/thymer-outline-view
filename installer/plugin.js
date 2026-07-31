@@ -32,6 +32,17 @@ const SUBPAGE_FIELD = {
 	many: false, read_only: false, active: true, type: 'record',
 };
 
+/** The view entry install() writes. Uninstall removes only views matching it. */
+const VIEW_ENTRY = {
+	id: 'outline', label: 'Outline', type: 'custom',
+	icon: 'ti-list-tree', shown: true, description: '', query: '',
+	read_only: false, opts: {}, field_ids: ['title'],
+	group_by_field_id: null, sort_field_id: 'title', sort_dir: 'asc',
+};
+
+const isOurView = (v) => v.type === 'custom'
+	&& (v.id === VIEW_ENTRY.id || v.label === VIEW_ENTRY.label);
+
 const isStub = (code) => !code
 	|| !code.trim()
 	|| code.includes('// Put your custom code here');
@@ -56,6 +67,26 @@ class Plugin extends AppPlugin {
 	}
 
 	// --- inspection ---------------------------------------------------------
+
+	/**
+	 * A FRESH handle on a collection's plugin. Never hold one across a write.
+	 *
+	 * getPluginByGuid() wraps a fixed reference to the live plugin instance, and
+	 * every config save destroys that instance and builds a new one from the
+	 * stored config. The old wrapper keeps answering from the config object it
+	 * was born with — so a handle kept from panel-open time is a snapshot, and
+	 * saving it back reverts anything the settings screen, another device or a
+	 * collaborator changed in the meantime. Config saves are whole-object
+	 * replaces, so that revert is silent and total.
+	 *
+	 * saveCode() has the same exposure even though it writes no config: it reads
+	 * its plugin's current config and the app stamps that copy into local state
+	 * regardless, so a stale handle re-asserts an old config locally and the next
+	 * real save persists it.
+	 */
+	resolve(guid) {
+		return this.data.getPluginByGuid(guid);
+	}
 
 	/**
 	 * Sub-pages, read from the config rather than from hasSubPages().
@@ -88,6 +119,10 @@ class Plugin extends AppPlugin {
 		return (api.getConfiguration().views || []).filter(v => v.type === 'custom');
 	}
 
+	ourViews(api) {
+		return (api.getConfiguration().views || []).filter(isOurView);
+	}
+
 	/**
 	 * Why the code state matters: saveCode() REPLACES a collection's plugin code
 	 * outright — there is no merge. Overwriting a collection that has formulas or
@@ -109,6 +144,7 @@ class Plugin extends AppPlugin {
 			nests: this.hasSubPages(api) || !!this.selfRefField(api),
 			subPages: this.hasSubPages(api),
 			views: this.customViews(api).length,
+			ours: this.ourViews(api).length,
 			code: this.codeState(api),
 		};
 	}
@@ -119,7 +155,22 @@ class Plugin extends AppPlugin {
 	 * Steps are idempotent: re-installing a half-installed collection finishes it
 	 * rather than duplicating anything.
 	 */
-	async install(api, log) {
+	async install(guid, log) {
+		let api = this.resolve(guid);
+		if (!api) { log('That collection is gone.'); return; }
+
+		// The code is checked BEFORE anything is written. A collection whose plugin
+		// slot belongs to somebody else gets no schema change at all — writing the
+		// field and the view first and then bailing out left a half-installed
+		// collection carrying a view its own plugin does not render.
+		if (this.codeState(api) === 'occupied') {
+			log('This collection already has plugin code of its own.');
+			log('Opening the editor so you can merge it yourself. Nothing was written.');
+			const existing = api.getExistingCodeAndConfig() || {};
+			api.previewPlugin(api.getConfiguration(), VIEW_SOURCE, existing.css || '', true);
+			return;
+		}
+
 		const conf = api.getConfiguration();
 		const needsNesting = !this.hasSubPages(api) && !this.selfRefField(api);
 		const needsView = !this.customViews(api).length;
@@ -136,14 +187,17 @@ class Plugin extends AppPlugin {
 			}
 			if (needsView) {
 				log('Adding a Custom view...');
-				conf.views = (conf.views || []).concat([{
-					id: 'outline', label: 'Outline', type: 'custom',
-					icon: 'ti-list-tree', shown: true, description: '', query: '',
-					read_only: false, opts: {}, field_ids: ['title'],
-					group_by_field_id: null, sort_field_id: 'title', sort_dir: 'asc',
-				}]);
+				conf.views = (conf.views || []).concat([Object.assign({}, VIEW_ENTRY)]);
 			}
-			await api.saveConfiguration(conf);
+			// A refused save is reported as a refusal. saveConfiguration() returns
+			// false when the user lacks permission on this collection — it does not
+			// throw — so an unchecked call reports success and writes nothing.
+			if (!await api.saveConfiguration(conf)) {
+				log('The workspace refused that change — you may not have permission to edit this collection.');
+				return;
+			}
+			api = this.resolve(guid);
+			if (!api) { log('That collection is gone.'); return; }
 		}
 
 		const state = this.codeState(api);
@@ -151,42 +205,51 @@ class Plugin extends AppPlugin {
 			log('Code is already up to date.');
 			return;
 		}
-		if (state === 'free' || state === 'outdated') {
-			log(state === 'outdated' ? 'Updating the view code...' : 'Writing the view code...');
-			await api.saveCode(VIEW_SOURCE);
-			log('Done. Open the collection and click the Outline tab.');
+		log(state === 'outdated' ? 'Updating the view code...' : 'Writing the view code...');
+		if (!await api.saveCode(VIEW_SOURCE)) {
+			log('The workspace refused that change — you may not have permission to edit this plugin.');
 			return;
 		}
-
-		// Occupied: hand it to the user rather than destroying their code.
-		log('This collection already has plugin code of its own.');
-		log('Opening the editor so you can merge it yourself. Nothing was written.');
-		const existing = api.getExistingCodeAndConfig() || {};
-		api.previewPlugin(conf, VIEW_SOURCE, existing.css || '', true);
+		log('Done. Open the collection and click the Outline tab.');
 	}
 
 	/**
 	 * Removes the view. Leaves the code alone unless it is exactly ours, and
 	 * never touches sub-pages — that field holds the nesting itself.
 	 */
-	async uninstall(api, log) {
-		const views = this.customViews(api);
-		if (views.length) {
-			log(`Removing ${views.length} custom view(s)...`);
+	async uninstall(guid, log) {
+		let api = this.resolve(guid);
+		if (!api) { log('That collection is gone.'); return; }
+
+		// Only the view this installer writes is removed. Filtering out every
+		// type:"custom" entry also deleted custom views the user had made — their
+		// label, columns and sort along with them — which is not what Remove means.
+		const mine = this.ourViews(api);
+		const others = this.customViews(api).length - mine.length;
+		if (mine.length) {
+			log(`Removing ${mine.length} Outline view(s)...`);
 			const conf = api.getConfiguration();
-			conf.views = (conf.views || []).filter(v => v.type !== 'custom');
-			await api.saveConfiguration(conf);
+			conf.views = (conf.views || []).filter(v => !isOurView(v));
+			if (!await api.saveConfiguration(conf)) {
+				log('The workspace refused that change — you may not have permission to edit this collection.');
+				return;
+			}
+			api = this.resolve(guid);
+			if (!api) { log('That collection is gone.'); return; }
 		}
+		if (others) log(`Leaving ${others} other custom view(s) alone.`);
 
 		const state = this.codeState(api);
 		if (state === 'current' || state === 'outdated') {
 			log('Clearing the view code...');
-			await api.saveCode(STUB);
+			if (!await api.saveCode(STUB)) {
+				log('The workspace refused that change — you may not have permission to edit this plugin.');
+				return;
+			}
 		} else {
 			log('Leaving the plugin code alone — it is not the Outline source.');
 		}
 		log('Sub-pages and your nesting are untouched.');
-		return 'done';
 	}
 
 	// --- panel --------------------------------------------------------------
@@ -214,7 +277,7 @@ class Plugin extends AppPlugin {
 
 		for (const api of collections) {
 			if (api.isJournalPlugin && api.isJournalPlugin()) continue;
-			this.renderRow(wrap, api);
+			this.renderRow(wrap, api.getGuid());
 		}
 	}
 
@@ -222,15 +285,21 @@ class Plugin extends AppPlugin {
 	 * Each collection owns a box that repaints itself. Actions redraw it when they
 	 * finish, so the summary and the buttons describe the collection as it is now
 	 * rather than as it was when the panel opened.
+	 *
+	 * Rows carry a GUID, never a plugin handle: a handle held across a write goes
+	 * stale (see resolve()), so both the reads behind the summary and the writes
+	 * behind the buttons have to start from a fresh one.
 	 */
-	renderRow(parent, api) {
+	renderRow(parent, guid) {
 		const box = el('div', parent);
 		box.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--border-color,rgba(128,128,128,.25));';
-		this.paintRow(box, api, []);
+		this.paintRow(box, guid, []);
 	}
 
-	paintRow(box, api, notes) {
+	paintRow(box, guid, notes) {
 		while (box.firstChild) box.removeChild(box.firstChild);
+		const api = this.resolve(guid);
+		if (!api) return;
 		const s = this.status(api);
 
 		const left = el('div', box);
@@ -266,11 +335,20 @@ class Plugin extends AppPlugin {
 			btn.addEventListener('click', async () => {
 				btn.disabled = true;
 				const log = [];
-				const push = (m) => { log.push(m); this.paintRow(box, api, log); };
-				try { await fn(api, push); }
+				const push = (m) => { log.push(m); this.paintRow(box, guid, log); };
+				try { await fn(guid, push); }
 				catch (err) { log.push(`Failed: ${String(err)}`); }
 				// Repaint once more: the status above was computed before the writes.
-				this.paintRow(box, api, log);
+				this.paintRow(box, guid, log);
+				// And again on a timer, because the CODE half of the status reads
+				// back stale for a moment after saveCode() even from a freshly
+				// resolved handle: the rebuilt plugin instance substitutes the
+				// default stub when the code is not in place yet (`f || (f = ma)` in
+				// the app's plugin factory), so the row claimed "plugin slot empty"
+				// and offered Install on a collection it had just finished
+				// installing — no Remove button until the panel was reopened. The
+				// config half is current immediately; only this needs the wait.
+				setTimeout(() => this.paintRow(box, guid, log), 500);
 			});
 			return btn;
 		};
@@ -284,9 +362,9 @@ class Plugin extends AppPlugin {
 
 		if (!complete) {
 			run(s.code === 'outdated' ? 'Update' : present ? 'Repair' : 'Install',
-				(a, l) => this.install(a, l), true);
+				(g, l) => this.install(g, l), true);
 		}
-		if (present) run('Remove', (a, l) => this.uninstall(a, l), false);
+		if (present) run('Remove', (g, l) => this.uninstall(g, l), false);
 		if (complete) {
 			const ok = el('div', box, 'Installed');
 			ok.style.cssText = 'font-size:12px;opacity:.6;align-self:center;';

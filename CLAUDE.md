@@ -74,10 +74,66 @@ the user to review and save. Recognising `outdated` by signature rather than
 equality is what keeps upgrades off that path — exact equality alone would
 class every older install as somebody else's code.
 
-Uninstall removes the custom views and restores the stub only when the code is
-ours. It never touches sub-pages: that field holds the nesting itself, and the
-links survive its removal only because Thymer keeps them (see below), which is
-not a bet worth making on a user's data.
+The code state is checked **before** any config write. An earlier build wrote
+the sub-page field and the view first and only then discovered the slot was
+occupied, so a collection it refused to install into was left carrying an
+Outline view its own plugin does not render, on top of a schema change nobody
+asked for.
+
+Uninstall removes the views the installer writes — `type: "custom"` **and** id
+`outline` or label `Outline` — and restores the stub only when the code is ours.
+Filtering out every custom view also deleted views the user had made by hand,
+their label, columns and sort with them. It never touches sub-pages: that field
+holds the nesting itself, and the links survive its removal only because Thymer
+keeps them (see below), which is not a bet worth making on a user's data.
+
+**A plugin handle goes stale the moment anything writes, and stays stale.**
+`data.getPluginByGuid()` wraps a *fixed reference* to the live plugin instance
+(`U()` reads the registry once at call time). Every config save runs
+`ac()` — `destroy()` plus a delete from that registry — and then `tt()` builds a
+**new** instance around a config object re-read from the stored kv. The old
+wrapper keeps answering from the config object it was born with, so a handle
+taken when the panel opened is a snapshot for the rest of its life, and
+`saveConfiguration()` is a whole-object replace: writing that snapshot back
+silently reverts anything the settings screen, another device or a collaborator
+changed in between — `property_sets` and friends included. The panel therefore
+holds collection **guids** and re-resolves before every read and every write,
+including between the config save and the code save inside one install.
+
+This is the same lag `CLAUDE.md` records for `hasSubPages()`, but it is not
+confined to one tick or one method.
+
+`saveCode()` carries the same exposure even though it writes no config:
+
+```js
+saveCode(e){ let t=this.#t.getConfiguration(); return Ae(...,t,e,null,!1,!0,!1) }
+```
+
+`Ae`'s `r=false` suppresses the config *sync op*, but the local
+`t.kv[Bs] = i` at the end runs unconditionally and `tt()` then rebuilds the
+collection from it. So a code-only write through a stale handle re-asserts an
+old config locally, and the next genuine save persists it.
+
+**The code half of the status reads back stale right after `saveCode()`**, even
+from a handle resolved after the write. `tt()` substitutes the default stub when
+the code is not in place yet (`f || (f = ma)`), so the row reported "plugin slot
+empty" and offered Install on a collection it had just installed — with no
+Remove button until the panel was reopened. Rows therefore repaint again on a
+500ms timer after every action. The config half is current immediately; the
+delay itself was not chased further than "reopening the panel shows the right
+state".
+
+**A refused save returns `false`; it does not throw.** `Ae()` checks
+`hasPermPluginConfSettings` / `hasPermPluginCodeEdit` and quietly writes nothing
+when the user lacks them. Unchecked, the panel told a read-only collaborator the
+install was done. Both call sites now test the boolean.
+
+**What does survive a round-trip: everything.** `getConfiguration()` is
+`return this.config` — the raw parsed config, not an SDK-shaped projection — and
+`Ae()` stores that object verbatim, so keys the SDK has never heard of
+(`property_sets`, `property_set_default`, `property_pinned`,
+`sidebar_display_mode`) come through untouched. Patch-what-you-read is enough;
+the danger is only in *when* you read.
 
 **Config changes must go out in ONE save.** The first build called
 `enableSubPages(true)` and then re-read the config to append the view. A write
