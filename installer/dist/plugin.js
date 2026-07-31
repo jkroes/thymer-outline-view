@@ -58,12 +58,28 @@ class Plugin extends AppPlugin {
 	// --- inspection ---------------------------------------------------------
 
 	/**
-	 * A record field pointing back at its own collection — what the view draws
-	 * the tree from when sub-pages are off.
+	 * Sub-pages, read from the config rather than from hasSubPages().
+	 *
+	 * hasSubPages() consults an internal field index that lags a config write, so
+	 * straight after an install it still answers false while the config already
+	 * has the property. This is the same test the app's own method makes, just
+	 * against data that cannot be stale — and it is what the view itself uses.
+	 */
+	hasSubPages(api) {
+		return (api.getConfiguration().fields || [])
+			.some(f => f.id === 'parent_page' && f.active !== false);
+	}
+
+	/**
+	 * A hand-made record property pointing back at its own collection — the other
+	 * way a collection can nest. `parent_page` is excluded so the two are real
+	 * alternatives: it satisfies this test too, and letting it match here would
+	 * describe a sub-pages collection as using a property of your own.
 	 */
 	selfRefField(api) {
 		const guid = api.getGuid();
 		return (api.getConfiguration().fields || []).find(f => f.type === 'record'
+			&& f.id !== 'parent_page'
 			&& f.active !== false
 			&& f.filter_colguid === guid) || null;
 	}
@@ -90,8 +106,8 @@ class Plugin extends AppPlugin {
 		return {
 			guid: api.getGuid(),
 			name: api.getName(),
-			nests: api.hasSubPages() || !!this.selfRefField(api),
-			subPages: api.hasSubPages(),
+			nests: this.hasSubPages(api) || !!this.selfRefField(api),
+			subPages: this.hasSubPages(api),
 			views: this.customViews(api).length,
 			code: this.codeState(api),
 		};
@@ -105,7 +121,7 @@ class Plugin extends AppPlugin {
 	 */
 	async install(api, log) {
 		const conf = api.getConfiguration();
-		const needsNesting = !api.hasSubPages() && !this.selfRefField(api);
+		const needsNesting = !this.hasSubPages(api) && !this.selfRefField(api);
 		const needsView = !this.customViews(api).length;
 
 		// Both config changes go in ONE save. Writes are not readable in the same
