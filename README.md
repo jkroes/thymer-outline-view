@@ -85,6 +85,10 @@ rows, edit the view's shown fields the normal way — the rows follow.
 
 ## Known limits
 
+In the future, sub-pages will be used as a fallback instead of an existing property, in order to support multiple hierarchies per collection--one for each self-referencing property in the same collection. 
+
+Currently, hierarchies like sub-pages assume a single "parent" record, which can't model actual familial parents (each person has two parents).
+
 Some parts of Thymer's plugin API that aren't open yet, so custom views can't mimic or alter every feature available to built-in views:
 
 - No drag-to-reorder and no move mode (`M`). The per-view custom order isn't
