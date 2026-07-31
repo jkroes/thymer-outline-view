@@ -4,9 +4,10 @@ Working notes for anyone (human or agent) changing this code. The user-facing
 description lives in `README.md`; this file is the *why*, and the record of
 undocumented app behavior the view leans on.
 
-A `CollectionPlugin` that adds one custom view, **Outline** (view id `outline`):
-a collection rendered as an indented, collapsible tree, styled to sit alongside
-the built-in List view.
+A `CollectionPlugin` that renders a collection as an indented, collapsible tree,
+styled to sit alongside the built-in List view. It claims every `type: "custom"`
+view the collection has rather than one fixed id — see the registration note
+below for why that is both safe and the reason the view id stops mattering.
 
 **Nothing in `plugin.js` is bound to a particular collection.** It reads the
 collection's own config at runtime — fields, views, sort, item name — so the
@@ -24,11 +25,21 @@ not do.
 
 ## Files
 
-`plugin.js` is the whole plugin. It declares a bare `class Plugin`, no `export`,
-so the file is paste-ready for the in-app Custom Code editor with no edit step.
-That also means `plugins/build.sh` can't bundle it — that script's
+`plugin.js` is the view. It declares a bare `class Plugin`, no `export`, so the
+file is paste-ready for the in-app Custom Code editor with no edit step. That
+also means `plugins/build.sh` can't bundle it — that script's
 `--format=iife --global-name=plugins` needs an export. Nothing here uses it;
 deploy is the `thymercli` path below.
+
+`installer/` is a separate GLOBAL plugin (`AppPlugin`) that installs the view
+into any collection. `installer/plugin.js` is a template with a
+`__VIEW_SOURCE__` placeholder and will not run as-is; `node installer/build.mjs`
+injects the view source and writes `installer/dist/plugin.js`, which is the
+pasteable artifact and is committed. The source is injected as a JSON string
+literal — the view is full of template literals and backticks, and
+`JSON.stringify` produces a valid JS string expression, so there is no escaping
+to get wrong. Embedded rather than fetched at runtime, so installing pulls
+nothing off the network into a workspace.
 
 **There is deliberately no `plugin.json`.** A collection config is one
 workspace's schema — its guids, field ids and choice ids — not part of the
@@ -42,6 +53,52 @@ apply. The view's own config entry is small enough to write by hand:
   "sort_field_id": "title", "sort_dir": "asc" }
 ```
 
+## The installer
+
+Live-verified 2026-07-31. `PluginCollectionAPI`, `PluginDynamicCollectionAPI`
+and `PluginGlobalPluginAPI` all extend `PluginPluginAPIBase` — "an API for a
+plugin to manage (other) plugins" — and `data.getPluginByGuid(<collection
+guid>)` hands back one of them. That gives `saveCode`, `savePlugin`,
+`saveConfiguration`, `saveCSS`, `previewPlugin` and `trashPlugin` over a
+collection the plugin does not own. Adding and removing views, adding fields and
+writing code were all confirmed against `Notes`, which was then restored.
+
+**`saveCode()` replaces the target's code outright.** There is no merge, and a
+collection gets exactly one plugin, so overwriting one that carries formulas or
+a custom record title deletes them. Hence the code-state check: `current` (byte
+equal to the embedded source), `outdated` (contains `registerOutlineView`, so it
+is an older build of ours), `free` (empty or the default stub), `occupied`.
+Silent writes happen only for `free` and `outdated`; `occupied` goes to
+`previewPlugin(conf, src, css, true)`, which loads the code into the editor for
+the user to review and save. Recognising `outdated` by signature rather than
+equality is what keeps upgrades off that path — exact equality alone would
+class every older install as somebody else's code.
+
+Uninstall removes the custom views and restores the stub only when the code is
+ours. It never touches sub-pages: that field holds the nesting itself, and the
+links survive its removal only because Thymer keeps them (see below), which is
+not a bet worth making on a user's data.
+
+**Config changes must go out in ONE save.** The first build called
+`enableSubPages(true)` and then re-read the config to append the view. A write
+is not readable in the same tick, so the re-read returned the config from
+*before* it, and saving that back dropped the sub-page field — leaving a
+collection with the view installed and no nesting. The installer now appends the
+`parent_page` field and the view to one config object and saves once. The field
+is written without `filter_colguid`; the app adds it.
+
+**Two readers of the same fact can disagree.** `hasSubPages()` consults an
+internal field index that lags a config write, while `getConfiguration()` is
+current. Straight after an install that made a row read "nests via a
+self-linking property" for a collection that had just had sub-pages turned on.
+The installer now derives sub-pages from the config with the app's own test
+(active `parent_page` present), matching what the view does, and excludes
+`parent_page` from the hand-made-property check so the two branches are real
+alternatives.
+
+Panel rows repaint themselves after an action, because the status line and the
+buttons are both computed from state the writes have just changed.
+
 ## Deploy
 
 `thymercli` talks to the desktop app's built-in MCP server on port 13100.
@@ -51,14 +108,22 @@ workspace's guid.
 ```bash
 bin/thymercli plugin update code <Collection> \
   -w <workspace-guid> < plugins/outline-view/plugin.js
+
+# the installer is a global plugin; address it by guid
+node plugins/outline-view/installer/build.mjs
+bin/thymercli plugin update code <installer-plugin-guid> \
+  -w <workspace-guid> < plugins/outline-view/installer/dist/plugin.js
 ```
+
+Create the installer's plugin record first if it doesn't exist — MCP
+`create_collection` with `type: "global_plugin"`.
 
 **Pass the workspace GUID, not the name.** A name fails with "MCP access is
 disabled for this workspace"; the GUID works.
 
-The view id has to already exist in the collection's config, and code and config
-must go out **together** when that id changes — see the registration note below.
-Read the live config, edit it, push it back:
+A Custom view has to exist in the collection's config for anything to render,
+but its id and label are free — the plugin binds to whatever is there. To add
+one, read the live config, edit it, push it back:
 
 ```bash
 bin/thymercli plugin show <Collection> -w <workspace-guid> --json | jq '.config' > /tmp/config.json
@@ -76,7 +141,9 @@ before you write and don't push a config from a different collection.
 - **Search** filters on the record name and every visible property. A match
   keeps its ancestors visible so the path down to it stays readable; those
   ancestors are force-expanded via a separate set, so the twisty still works
-  mid-search. Arrow keys drive the list while the caret is in the box.
+  mid-search. From inside the box, `Enter` opens the selected row and `↓` blurs
+  the box for the first row (`focusFromCollectionSearch`); `↑` goes to the active
+  view tab and `Escape` clears the filter.
 - **Properties** come from the view's own settings (`getVisiblePropertyIds()`),
   rendered by type — choice as a colored pill, record as a link chip with `↗`,
   number/text as plain text. Editing visible properties in view settings
