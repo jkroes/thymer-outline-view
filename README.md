@@ -67,20 +67,16 @@ paste it into yours.
 
 | key | does |
 |---|---|
-| `↑` `↓` | move between rows; `↑` from the top row goes to the search box |
+| `↑` `↓` | move between rows; `↑` from the top row goes to the search box. In property mode, move between the record's fields instead |
 | `←` `→` | cycle through rows or buttons on the toolbar |
 | `⌘↑` `⌘↓` | collapse / expand the focused node (`Ctrl` on Windows/Linux) if possible; falls back to `↑` `↓` |
 | `Home` `End` | first / last row |
-| `Enter` | open the focused record in this panel |
-| `⌘Enter` | open it in the side panel |
+| `Enter` | open the focused record in this panel. While peeking, commit the peek — it becomes a real open and takes focus. In property mode, edit the highlighted field: text and number get an inline box, choice and record-link a filter menu with the row's own descendants left out so you can't make a loop |
+| `⌘Enter` | open it in the side panel; commits a peek, same as `Enter` |
 | `Shift+Enter` | create a record and open its name for typing right there in the tree, instead of navigating off to a new page. Leave it unnamed and it's discarded |
-| `Space` | peek the focused record in the side panel. Keep arrowing and the panel follows the selection, so you can skim a branch without committing to any of it. If you already had something open on the side, the peek borrows that panel and puts it back when it ends |
-| ↳ `Space` `Escape` | dismiss the peek |
-| ↳ `Enter` `⌘Enter` | commit it — the peek becomes a real open and takes focus |
-| `E` | property mode: the focused record's fields open as a list underneath it. Not just the row's chips — it's Title, then the chips, then every other editable field. That includes the parent, so you can re-hang a branch of the tree without opening the record |
-| ↳ `↑` `↓` | move between fields |
-| ↳ `Enter` | edit the highlighted field. Text and number get an inline box; choice and record-link get a filter menu, with the row's own descendants left out so you can't make a loop |
-| ↳ `Escape` `E` | leave property mode |
+| `Space` | peek the focused record in the side panel, `Space` again to dismiss. Keep arrowing and the panel follows the selection, so you can skim a branch without committing to any of it. If you already had something open on the side, the peek borrows that panel and puts it back when it ends |
+| `E` | property mode, `E` again to leave: the focused record's fields open as a list underneath it. Not just the row's chips — it's Title, then the chips, then every other editable field. That includes the parent, so you can re-hang a branch of the tree without opening the record |
+| `Escape` | dismiss a peek, or leave property mode |
 | `/` | jump to the search box |
 | Click | open the record; `⌘`-click or middle-click opens it aside; `Shift`-click just focuses |
 
