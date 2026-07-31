@@ -98,8 +98,26 @@ class Plugin extends CollectionPlugin {
 		this.registerOutlineView();
 	}
 
+	/**
+	 * Claim every custom view the collection has, rather than one hardcoded id.
+	 *
+	 * A collection has exactly one plugin, so its custom views can only be
+	 * rendered by this code — there is nothing else they could belong to. Binding
+	 * to whatever is there means the view id stops being load-bearing: renaming
+	 * it, or letting the app's sanitizer rewrite it, can't unhook the view.
+	 * `register()` is a Map.set keyed by view id, so calling it per view is fine.
+	 *
+	 * Views added after load aren't seen until the plugin reloads, which saving
+	 * the collection config does anyway.
+	 */
 	registerOutlineView() {
-		this.views.register("outline", (viewContext) => {
+		const views = (this.getConfiguration().views || [])
+			.filter(v => v.type === 'custom');
+		for (const view of views) this.registerOn(view.id);
+	}
+
+	registerOn(viewId) {
+		this.views.register(viewId, (viewContext) => {
 			const ui = this.ui;
 			const plugin = this;
 			const collectionGuid = () => plugin.collection.getGuid();
@@ -789,17 +807,23 @@ class Plugin extends CollectionPlugin {
 			 * The fields E-mode walks: Title first (native puts the title at the top
 			 * of a card's property list too), then the properties the row already
 			 * shows as chips, minus the types there is no editor for.
+			 *
+			 * The hierarchy field is deliberately NOT skipped, whether it is
+			 * `parent_page` or a hand-made one: re-hanging a branch is the edit an
+			 * outline is for. `parent_page` was in the skip list from the commit that
+			 * added E-mode, back when the tree came from a hand-made `Parent` field
+			 * and the sub-page field was unused; moving the hierarchy onto
+			 * `parent_page` turned that skip into a silent regression.
 			 */
 			const EDITABLE_TYPES = ['text', 'number', 'choice', 'record'];
-			const EDIT_SKIP_IDS = ['title', 'icon', 'collection', 'parent_page'];
+			const EDIT_SKIP_IDS = ['title', 'icon', 'collection'];
 			const editableFields = () => {
 				const canEdit = f => f && f.active !== false && !f.read_only
 					&& EDITABLE_TYPES.includes(f.type) && !EDIT_SKIP_IDS.includes(f.id);
 				// The fields the row already shows come first, then everything else
 				// the collection has. Native property mode walks only the card's shown
-				// properties, but the field that shapes the tree (Parent) is usually
-				// NOT one of them, and not being able to reparent from here would miss
-				// the point of editing on an outline.
+				// properties; going wider is what puts a hand-made hierarchy field in
+				// reach, since it is usually not one of the row's chips.
 				const shown = visibleFields().filter(canEdit);
 				const rest = (plugin.getConfiguration().fields || [])
 					.filter(f => canEdit(f) && !shown.some(s => s.id === f.id));
@@ -1129,8 +1153,14 @@ class Plugin extends CollectionPlugin {
 					if (hasChildren) {
 						$twisty.appendChild(ui.createIcon('ti-chevron-right'));
 						$twisty.classList.toggle('expanded', isExpanded(node));
-						$twisty.addEventListener('click', (e) => {
+						// On mouseup, not click: the row opens on mouseup, which fires
+						// first, so a click-phase stopPropagation() here toggles the
+						// node AND navigates to it. Left button only, so middle-click
+						// still falls through to the row's open-aside.
+						$twisty.addEventListener('mouseup', (e) => {
+							if (e.button !== 0) return;
 							e.stopPropagation();
+							e.preventDefault();
 							toggle(node);
 						});
 					}

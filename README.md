@@ -1,35 +1,25 @@
 # Outline view for Thymer
 
-A custom collection view that shows your records as an indented, collapsible tree instead of a flat list. Modeled on Thymer's native List view. It works on any self-referencing collection. Nothing in it is specific to one collection. Nesting comes from sub-pages.
+A collection view that shows your records as an indented, collapsible tree instead of a flat list, modeled on Thymer's List view. It works on any collection with a property that references itself. 
 
 ## Features
 
-- A real tree. Indented rows, one toggle per parent, collapse state remembered
+- **A real tree.** Indented rows, one toggle per parent, collapse state remembered
   per device.
-- Search that keeps its place. Filtering matches record names and every visible
+- **Search that keeps its place.** Filtering matches record names and every visible
   property, and keeps a hit's parents on screen so you can see where in the tree
-  it lives. Arrow keys drive the list while you're still typing.
-- Your properties on the rows. Whichever properties the view is set to show
+  it lives. `Enter` opens the top hit without leaving the box, and `↓` drops you
+  into the results.
+- **Row properties.** Whichever properties the view is set to show
   appear as chips — choices as colored pills, links as clickable chips. Chips
-  line up in a right-hand column, and drop to a second line only when the name
-  needs the room.
-- Edit in place, with `E`. The focused record's fields open underneath it.
-  `↑`/`↓` to pick one, `Enter` to edit, `Escape` to close. Text, number, choice
-  and record-link fields are all editable, including the parent, so you can
-  re-hang a branch of the tree without opening the record.
-- Peek, with `Space`. Opens the focused record in the side panel, and the panel
-  follows as you keep arrowing. `Enter` turns the peek into a real open. If you
-  already had something open on the side, it's put back when the peek ends.
-- Create in place. `Shift+Enter` adds a record and opens its name for typing
-  right there in the tree, instead of jumping you to a new blank page. Walk away
-  without naming it and it's discarded.
-- A working toolbar. Thymer doesn't give custom views the usual toolbar, so this
+  line up in a right-hand column, and wrap to a second line when space is limited.
+- **A working toolbar.** Thymer doesn't give custom views the usual toolbar, so this
   rebuilds it: view tabs, a create button, sort field and direction.
+- **So many shortcuts.** You'll forget this isn't a built-in view. See [Keys](#keys).
 
 ## Install
 
-Everything happens in the settings for the collection you want the outline on.
-Open that collection, then go to its settings.
+Open a collection where you want this view, then go to its settings.
 
 ### 1. Give the collection a way to nest
 
@@ -37,64 +27,64 @@ The tree is drawn from a record-link property that points back at the same
 collection. Turning on sub-pages is how you get one — it adds a "Sub-page of"
 property, and Thymer's own writes through that property refuse to create loops.
 
-If the collection already nests through a link property you made yourself, that
-works too and you can skip this step. Sub-pages win if both exist.
+A property you made yourself works just as well, so skip this step if the
+collection already nests. The view takes "Sub-page of" when the collection has
+it, and otherwise falls back to the first active record-link property whose
+target is this same collection. First means first in the collection's field
+order, and there is no way to choose, so keep it to one such property. If that
+property holds several links, only the first is read. See [Known limitations](#known-limits).
+
+Turning sub-pages back off removes the "Sub-page of" property from the
+collection, so the view loses that hierarchy and falls back to a self-pointing
+property if you have one. The links survive: turn sub-pages on again and every
+parent comes back exactly as it was.
 
 ### 2. Add a Custom view
 
-Add a view and choose type Custom. Name it whatever you like; "Outline" is the
-obvious choice.
+In the collection's settings, add a view and choose the type **Custom**. Name it
+whatever you like.
 
-### 3. Set that view's id to `outline`
+### 3. Paste in the code
 
-The fiddly step. The plugin registers itself against the view id `outline`, so
-the two have to match or the tab comes up empty.
+Open the collection's plugin code editor and paste in the whole of
+[`plugin.js`](plugin.js). Save.
 
-Open the collection's config JSON, find your new view in the `views` array, and
-set its `"id"`:
+Open the view's tab and the tree renders. Nothing to configure — the plugin
+claims whatever custom views the collection has, so the view's name and id are
+yours to change freely.
 
-```json
-{ "id": "outline", "label": "Outline", "type": "custom", ... }
-```
-
-If you'd rather not touch the JSON, do the reverse — leave the id Thymer
-generated and change the `this.views.register("outline", …)` line near the top
-of `plugin.js` to that id.
-
-### 4. Paste in the code
-
-Plugin → Edit Code. Paste the whole of [`plugin.js`](plugin.js) into Custom
-Code and save. No edits needed; the file is written to be pasted as-is.
-
-Open the view's tab and the tree renders. To change which properties show on the
-rows, edit the view's shown fields the normal way — the rows follow.
-
-`plugin.json` in this repo is one workspace's exported collection config,
-included only as an example of the shape. Its ids are that workspace's, so don't
-paste it into yours.
+To change which properties show on the rows, edit the view's shown fields the
+normal way and the rows follow.
 
 ## Keys
 
-| key | does |
+| Key | Action |
 |---|---|
-| `↑` `↓` | move between rows; `↑` from the top row goes to the search box |
-| `←` `→` | cycle through rows (Thymer uses these for panels elsewhere, so they're taken over here) |
-| `⌘↑` `⌘↓` | collapse / expand the focused node (`Ctrl` on Windows/Linux) |
-| `Home` `End` | first / last row |
-| `Enter` | open the focused record in this panel |
-| `⌘Enter` | open it in the side panel |
-| `Shift+Enter` | create a record and name it in place |
-| `Space` | peek the focused record in the side panel; `Space` again to dismiss |
-| `E` | open the focused record's properties for editing |
-| `/` | jump to the search box |
-| `Escape` | close a peek, or leave property mode |
-| click | open the record; `⌘`-click or middle-click opens it aside; `Shift`-click just focuses |
+| `↑` `↓` | Move between rows. From the top row, `↑` goes to the search box. |
+| `←` `→` | Cycle through rows, or through the toolbar buttons when one of them has focus. |
+| `⌘↑` `⌘↓` | Collapse or expand the focused node. When there is nothing to open, `⌘↓` moves to the next row. When there is nothing to close, `⌘↑` climbs to the parent, or moves to the previous row if the node is already a root. |
+| `Tab` | Move to the next row, wrapping at the end. From the search box, move into the list. `Shift+Tab` is left to the browser, as it is in Thymer's own list view. |
+| `Home` `End` | Go to the first or last row. |
+| `Enter` | Open the focused record in this panel. |
+| `⌘Enter` | Open the focused record in the side panel. |
+| `Shift+Enter` | Create a record and open its name for typing in place, rather than navigating to a new page. Leave it unnamed and it goes to the trash, recoverable like any other trashed record. |
+| `Space` | Peek the focused record in the side panel. The peek follows the selection as you arrow, so you can walk a branch without opening anything. A side panel you already had open is borrowed, then put back on what it was showing. `Enter` or `⌘Enter` commits the peek to a real open. `Space` again or `Escape` dismisses it. |
+| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited, including the one the tree is built from, so you can move a whole branch without opening the record. That field's menu leaves out the row's own descendants, so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
+| `/` | Focus the search box. `Escape` there clears what you typed. |
+| Click | Open the record. `⌘`-click or middle-click opens it in the side panel. `Shift`-click focuses the row without opening it. |
 
 ## Known limits
 
-These come from parts of Thymer's plugin API that aren't open yet, not from
-choices made here:
+In the future, sub-pages will be used as a fallback instead of an existing property, in order to support multiple hierarchies per collection--one for each self-referencing property in the same collection. 
 
+Currently, hierarchies like sub-pages assume a single "parent" record, which can't model actual familial parents (each person has two parents).
+
+Some parts of Thymer's plugin API that aren't open yet, so custom views can't mimic or alter every feature available to built-in views:
+
+- Every Custom view in the collection becomes an outline. That is what frees you
+  from naming the view or minding its id, but it means a collection running this
+  can't also have a Custom view doing something else — a collection has only one
+  plugin, so there is nothing else for those views to be.
 - No drag-to-reorder and no move mode (`M`). The per-view custom order isn't
   writable from a plugin, so "Custom Order" isn't offered as a sort either.
 - No `Alt+Enter` (create above) — there's no positioned-create call.
@@ -103,13 +93,13 @@ choices made here:
   is the only way to keep the back-button history tidy.
 - The status bar shows Thymer's default shortcuts, not this view's — a custom
   view can add status bar items but can't replace the set.
-- Sort resets when the view is rebuilt. Thymer's own custom views do the same;
+- Sort resets when the view is rebuilt. Thymer's native views do the same;
   the sort you pick isn't written back to the view's config.
 
 ## Contributing / hacking
 
 `CLAUDE.md` in this repo is the implementation write-up: how the tree is built,
-what the native list view does key-for-key and where this deviates, what
+what the built-in list view does key-for-key and where this deviates, what
 sub-pages actually are underneath, and a long list of app behavior that isn't in
 the SDK docs (most of it read out of the shipped bundle). Read it before
 changing anything — a fair amount of this code looks arbitrary until you know
