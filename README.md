@@ -64,13 +64,13 @@ rows, edit the view's shown fields the normal way — the rows follow.
 |---|---|
 | `↑` `↓` | Move between rows. From the top row, `↑` goes to the search box. |
 | `←` `→` | Cycle through rows, or through the toolbar buttons when one of them has focus. |
-| `⌘↑` `⌘↓` | Collapse or expand the focused node. Falls back to `↑` `↓` when there is nothing to collapse or expand. Use `Ctrl` on Windows and Linux. |
+| `⌘↑` `⌘↓` | Collapse or expand the focused node. Falls back to `↑` `↓` when there is nothing to collapse or expand. |
 | `Home` `End` | Go to the first or last row. |
 | `Enter` | Open the focused record in this panel. |
 | `⌘Enter` | Open the focused record in the side panel. |
 | `Shift+Enter` | Create a record and open its name for typing in place, rather than navigating to a new page. Leave it unnamed and it is discarded. |
 | `Space` | Peek the focused record in the side panel. The peek follows the selection as you arrow, so you can walk a branch without opening anything. A side panel you already had open is borrowed, then put back on what it was showing. `Enter` or `⌘Enter` commits the peek to a real open. `Escape` dismisses it. |
-| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. The parent is included, so you can re-hang a branch of the tree without opening the record. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. The row's own descendants are left out of that menu, so you cannot create a loop. `Escape` or `E` leaves. |
+| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited. The "Sub-page of" link is left out, so on a collection that nests through sub-pages you reparent from the record itself rather than from here. A self-pointing property you made yourself is editable, and its menu leaves out the row's own descendants so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
 | `/` | Focus the search box. |
 | Click | Open the record. `⌘`-click or middle-click opens it in the side panel. `Shift`-click focuses the row without opening it. |
 
