@@ -37,10 +37,13 @@ a button that says what it will do:
 
 | Button | Meaning |
 |---|---|
-| Install | Nothing is set up yet. Turns on sub-pages if the collection has no way to nest, adds a Custom view, writes the view code. |
-| Repair | The view is there but a piece is missing, such as the nesting. Adds only what's absent and leaves your view's name, shown properties and sort alone. |
+| Install | Nothing is set up yet. Turns on sub-pages if the collection has no way to nest, adds one Outline view per nesting property, writes the view code. |
+| Repair | The views are there but something is out of step — a property with no view, or a view whose property was deleted. Fixes just that, and leaves each view's name, shown properties and sort alone. |
 | Update | An older build of the view is installed. Overwrites just the code. |
-| Remove | Takes out the Custom views and clears the code. Never touches sub-pages or your nesting — those hold real data. |
+| Remove | Takes out the Outline views and clears the code. Leaves custom views you made yourself, and never touches sub-pages or your nesting — those hold real data. |
+
+The line above the button says what Install would change, so you can see which
+views it would add or remove before pressing it.
 
 A collection that is complete and up to date shows "Installed" and offers only
 Remove.
@@ -59,8 +62,7 @@ doesn't fetch anything from the internet.
 
 1. **Give the collection a way to nest.** Turn on sub-pages, which adds a
    "Sub-page of" property. A record-link property you made yourself that points
-   back at the same collection works too — skip this step if you already have
-   one.
+   back at the same collection works too.
 2. **Add a Custom view.** In the collection's settings, add a view of type
    Custom and name it whatever you like.
 3. **Paste in the code.** Open the collection's plugin code editor, paste the
@@ -73,17 +75,36 @@ yours to change freely.
 ### Either way
 
 The tree is drawn from a record-link property pointing back at the same
-collection. "Sub-page of" is used when the collection has it; otherwise the
-first such property in field order is used, and there's no way to choose among
-several, so keep it to one. If that property holds several links, only the first
-is read.
+collection — "Sub-page of", or one you made yourself.
 
-Turning sub-pages back off removes the "Sub-page of" property, so the view loses
+**A collection can have several of these, and each is its own hierarchy.** The
+installer gives you one Outline view per property, so you can keep, say, a
+sub-page tree and a "Reports to" tree side by side and switch between them with
+the view tabs. Each view remembers which property it draws, and keeps its own
+name, columns, sort and collapsed rows.
+
+The sub-page view is named **Outline**; every other one is named after its
+property, as **Outline: Reports to**. Rename a property and Install brings that
+name up to date — unless you renamed the view yourself, in which case your name
+is kept. Either way the view goes on drawing the right tree.
+
+Only properties that hold a **single** link and point back at the **same**
+collection can be nested by. A property that holds several links would give a
+record more than one parent, which is no longer a tree; one pointing at a
+different collection points at records this view never sees.
+
+A view added by hand, with no property assigned, falls back to "Sub-page of", or
+to the first eligible property if the collection has no sub-pages.
+
+**The property is what a view is made from.** Running Install again re-creates a
+view you deleted, because the property is still there. To get rid of a view for
+good, delete its property — the next Install clears the view away. Until you run
+it, a view whose property is gone lists everything flat and says so in its
+toolbar.
+
+Turning sub-pages back off removes the "Sub-page of" property, so its view loses
 that hierarchy. The links survive: turn sub-pages on again and every parent
 comes back exactly as it was.
-
-To change which properties show on the rows, edit the view's shown fields the
-normal way and the rows follow.
 
 ## Keys
 
@@ -104,9 +125,9 @@ normal way and the rows follow.
 
 ## Known limits
 
-In the future, sub-pages will be used as a fallback instead of an existing property, in order to support multiple hierarchies per collection--one for each self-referencing property in the same collection. 
-
-Currently, hierarchies like sub-pages assume a single "parent" record, which can't model actual familial parents (each person has two parents).
+A hierarchy assumes each record has a single parent, so it can't model something
+like familial parents, where each person has two. A property holding several
+links is skipped rather than drawn wrong.
 
 Some parts of Thymer's plugin API that aren't open yet, so custom views can't mimic or alter every feature available to built-in views:
 
