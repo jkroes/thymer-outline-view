@@ -74,9 +74,10 @@ Only views that are switched on are searched, so make sure the new view is
 visible in the collection's view list.
 
 If you drive Thymer over MCP or the CLI, there is another route: set the view's
-`"id"` to `"outline"` in the collection config and leave the code alone. That id
-cannot be reached from the app's own settings screens, so the rename above is
-the way to do it in the UI.
+`"id"` to `"outline"` in the collection config and leave the code alone. Note
+that Thymer strips anything outside letters, digits and underscore from a view
+id as it saves, without saying so — ask for `my-outline` and you get
+`myoutline` — so keep ids to those characters and read back what you got.
 
 Once it renders: to change which properties show on the rows, edit the view's
 shown fields the normal way — the rows follow.
