@@ -98,8 +98,26 @@ class Plugin extends CollectionPlugin {
 		this.registerOutlineView();
 	}
 
+	/**
+	 * Claim every custom view the collection has, rather than one hardcoded id.
+	 *
+	 * A collection has exactly one plugin, so its custom views can only be
+	 * rendered by this code — there is nothing else they could belong to. Binding
+	 * to whatever is there means the view id stops being load-bearing: renaming
+	 * it, or letting the app's sanitizer rewrite it, can't unhook the view.
+	 * `register()` is a Map.set keyed by view id, so calling it per view is fine.
+	 *
+	 * Views added after load aren't seen until the plugin reloads, which saving
+	 * the collection config does anyway.
+	 */
 	registerOutlineView() {
-		this.views.register("outline", (viewContext) => {
+		const views = (this.getConfiguration().views || [])
+			.filter(v => v.type === 'custom');
+		for (const view of views) this.registerOn(view.id);
+	}
+
+	registerOn(viewId) {
+		this.views.register(viewId, (viewContext) => {
 			const ui = this.ui;
 			const plugin = this;
 			const collectionGuid = () => plugin.collection.getGuid();

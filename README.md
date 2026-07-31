@@ -42,45 +42,19 @@ parent comes back exactly as it was.
 ### 2. Add a Custom view
 
 In the collection's settings, add a view and choose the type **Custom**. Name it
-whatever you like — "Outline" is the obvious choice. Remember exactly what you
-typed, capitals included; the next step needs it.
+whatever you like.
 
-### 3. Paste in the code and point it at your view
+### 3. Paste in the code
 
 Open the collection's plugin code editor and paste in the whole of
-[`plugin.js`](plugin.js). No other edits are needed — the file is written to be
-pasted as-is.
+[`plugin.js`](plugin.js). Save.
 
-Near the top you will find this line:
+Open the view's tab and the tree renders. Nothing to configure — the plugin
+claims whatever custom views the collection has, so the view's name and id are
+yours to change freely.
 
-```js
-this.views.register("outline", (viewContext) => {
-```
-
-Change `"outline"` to your view's name:
-
-```js
-this.views.register("Outline", (viewContext) => {
-```
-
-Save, then open the view's tab. The tree renders.
-
-That string is how Thymer finds your view. It is matched against view names
-first and internal ids second, and the match is exact, so `Outline` and
-`outline` are two different things. If you later rename the view, come back and
-change this string to match, or the tab will go blank.
-
-Only views that are switched on are searched, so make sure the new view is
-visible in the collection's view list.
-
-If you drive Thymer over MCP or the CLI, there is another route: set the view's
-`"id"` to `"outline"` in the collection config and leave the code alone. Note
-that Thymer strips anything outside letters, digits and underscore from a view
-id as it saves, without saying so — ask for `my-outline` and you get
-`myoutline` — so keep ids to those characters and read back what you got.
-
-Once it renders: to change which properties show on the rows, edit the view's
-shown fields the normal way — the rows follow.
+To change which properties show on the rows, edit the view's shown fields the
+normal way and the rows follow.
 
 ## Keys
 
