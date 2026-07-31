@@ -295,6 +295,21 @@ hand-made `Parent` field until then; its 8 records were migrated to
 `parent_page` over MCP and `Parent` was archived (`active: false`, which keeps
 its data).
 
+The bundle confirms both halves (read 2026-07-30, `app-M2F5L26A.js`, where
+`et = "parent_page"`):
+
+```js
+hasSubPages(){ let e=this._fieldsById.get(et); return !!e && e.active!==!1 }
+enableSubPages(e){ ... if(e&&!s) i.fields.push({id:et,label:"Sub-page of",many:!1,type:record,active:!0})
+                   else if(!e&&s) i.fields=i.fields.filter(n=>n.id!==et) ... }
+```
+
+Two things follow. **Disabling sub-pages deletes the field** rather than
+deactivating it, so it is not the reversible toggle "enable/disable" suggests.
+And **`hierarchyFieldId()`'s first line is the app's own test**, character for
+character — `collection.hasSubPages()` exists on the SDK's collection API and
+says the same thing, so prefer it if that line is ever touched.
+
 What that run established, all of it verified rather than assumed:
 
 - **Enabling sub-pages does not touch the sidebar.** `sidebar_display_mode`

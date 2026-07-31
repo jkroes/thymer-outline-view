@@ -26,8 +26,15 @@ The tree is drawn from a record-link property that points back at the same
 collection. Turning on sub-pages is how you get one — it adds a "Sub-page of"
 property, and Thymer's own writes through that property refuse to create loops.
 
-If the collection already nests through a link property you made yourself, that
-works too and you can skip this step. Sub-pages win if both exist.
+A property you made yourself works just as well, so skip this step if the
+collection already nests. The view takes "Sub-page of" when the collection has
+it, and otherwise falls back to the first active record-link property whose
+target is this same collection. First means first in the collection's field
+order, and there is no way to choose, so keep it to one such property. If that
+property holds several links, only the first is read.
+
+Turning sub-pages back off removes the "Sub-page of" property from the
+collection outright, taking the nesting with it.
 
 ### 2. Add a Custom view
 
@@ -70,7 +77,7 @@ rows, edit the view's shown fields the normal way — the rows follow.
 | `⌘Enter` | Open the focused record in the side panel. |
 | `Shift+Enter` | Create a record and open its name for typing in place, rather than navigating to a new page. Leave it unnamed and it is discarded. |
 | `Space` | Peek the focused record in the side panel. The peek follows the selection as you arrow, so you can walk a branch without opening anything. A side panel you already had open is borrowed, then put back on what it was showing. `Enter` or `⌘Enter` commits the peek to a real open. `Escape` dismisses it. |
-| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited, including the one the tree is built from, so you can re-hang a whole branch without opening the record. That field's menu leaves out the row's own descendants, so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
+| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited, including the one the tree is built from, so you can move a whole branch without opening the record. That field's menu leaves out the row's own descendants, so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
 | `/` | Focus the search box. |
 | Click | Open the record. `⌘`-click or middle-click opens it in the side panel. `Shift`-click focuses the row without opening it. |
 
