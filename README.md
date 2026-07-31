@@ -18,8 +18,7 @@ A collection view that shows your records as an indented, collapsible tree inste
 
 ## Install
 
-Everything happens in the settings for the collection you want the outline on.
-Open that collection, then go to its settings.
+Open a collection where you want this view, then go to its settings.
 
 ### 1. Give the collection a way to nest
 
@@ -58,10 +57,6 @@ Code and save. No edits needed; the file is written to be pasted as-is.
 
 Open the view's tab and the tree renders. To change which properties show on the
 rows, edit the view's shown fields the normal way — the rows follow.
-
-`plugin.json` in this repo is one workspace's exported collection config,
-included only as an example of the shape. Its ids are that workspace's, so don't
-paste it into yours.
 
 ## Keys
 

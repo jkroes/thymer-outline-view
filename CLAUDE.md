@@ -24,10 +24,23 @@ not do.
 
 ## Files
 
-| file | what |
-|---|---|
-| `plugin.js` | the view. Declares a bare `class Plugin`, no `export`, so the file is paste-ready for the in-app Custom Code editor with no edit step. That also means `plugins/build.sh` can't bundle it — that script's `--format=iife --global-name=plugins` needs an export. Nothing here uses it; deploy is the `thymercli` path below |
-| `plugin.json` | **an example.** One workspace's exported collection config — its guids, field ids and choice ids are that workspace's, not portable. Useful as a shape reference and as the deploy artifact in the tree it came from; not a template to copy into another workspace |
+`plugin.js` is the whole plugin. It declares a bare `class Plugin`, no `export`,
+so the file is paste-ready for the in-app Custom Code editor with no edit step.
+That also means `plugins/build.sh` can't bundle it — that script's
+`--format=iife --global-name=plugins` needs an export. Nothing here uses it;
+deploy is the `thymercli` path below.
+
+**There is deliberately no `plugin.json`.** A collection config is one
+workspace's schema — its guids, field ids and choice ids — not part of the
+plugin, and it is re-readable from the live app any time (see below), so
+committing one only ships a snapshot that goes stale and that nobody else can
+apply. The view's own config entry is small enough to write by hand:
+
+```json
+{ "id": "outline", "label": "Outline", "type": "custom",
+  "icon": "ti-list-tree", "shown": true, "field_ids": [...],
+  "sort_field_id": "title", "sort_dir": "asc" }
+```
 
 ## Deploy
 
@@ -38,22 +51,23 @@ workspace's guid.
 ```bash
 bin/thymercli plugin update code <Collection> \
   -w <workspace-guid> < plugins/outline-view/plugin.js
-
-bin/thymercli plugin update config <Collection> \
-  -w <workspace-guid> --file plugins/outline-view/plugin.json
 ```
 
 **Pass the workspace GUID, not the name.** A name fails with "MCP access is
 disabled for this workspace"; the GUID works.
 
-Code and config must go out **together** when the view id changes — see the
-registration note below.
-
-To re-read the live state (this is how `plugin.json` is kept in sync):
+The view id has to already exist in the collection's config, and code and config
+must go out **together** when that id changes — see the registration note below.
+Read the live config, edit it, push it back:
 
 ```bash
-bin/thymercli plugin show <Collection> -w <workspace-guid> --json | jq '.config'
+bin/thymercli plugin show <Collection> -w <workspace-guid> --json | jq '.config' > /tmp/config.json
+# edit /tmp/config.json
+bin/thymercli plugin update config <Collection> -w <workspace-guid> --file /tmp/config.json
 ```
+
+`update config` replaces the collection's entire schema and view list, so read
+before you write and don't push a config from a different collection.
 
 ## What the view does
 
