@@ -18,6 +18,20 @@ const PANEL_ID = 'outline-installer';
 /** What a collection's plugin slot looks like when nobody has touched it. */
 const STUB = 'class Plugin extends CollectionPlugin {\n  onLoad() {\n    // Put your custom code here...\n  }\n}\n';
 
+/**
+ * A distinctive name from the view's source. Used to recognise OUR code in a
+ * collection even when it is an older build — exact equality only ever answers
+ * "is this the current version", and treating a previous version as somebody
+ * else's code would send every upgrade through the merge path for no reason.
+ */
+const SIGNATURE = 'registerOutlineView';
+
+/** The field enableSubPages() appends. The app fills in filter_colguid itself. */
+const SUBPAGE_FIELD = {
+	icon: 'ti-list-tree', id: 'parent_page', label: 'Sub-page of',
+	many: false, read_only: false, active: true, type: 'record',
+};
+
 const isStub = (code) => !code
 	|| !code.trim()
 	|| code.includes('// Put your custom code here');
@@ -66,7 +80,8 @@ class Plugin extends AppPlugin {
 	 */
 	codeState(api) {
 		const code = (api.getExistingCodeAndConfig() || {}).code || '';
-		if (code.trim() === VIEW_SOURCE.trim()) return 'installed';
+		if (code.trim() === VIEW_SOURCE.trim()) return 'current';
+		if (code.includes(SIGNATURE)) return 'outdated';
 		if (isStub(code)) return 'free';
 		return 'occupied';
 	}
@@ -89,43 +104,49 @@ class Plugin extends AppPlugin {
 	 * rather than duplicating anything.
 	 */
 	async install(api, log) {
-		if (!api.hasSubPages() && !this.selfRefField(api)) {
-			log('Turning on sub-pages...');
-			await api.enableSubPages(true);
-		}
+		const conf = api.getConfiguration();
+		const needsNesting = !api.hasSubPages() && !this.selfRefField(api);
+		const needsView = !this.customViews(api).length;
 
-		// Re-read: enableSubPages() saves the config, so a copy taken earlier is
-		// stale and would write the sub-page field back out.
-		if (!this.customViews(api).length) {
-			log('Adding a Custom view...');
-			const conf = api.getConfiguration();
-			conf.views = (conf.views || []).concat([{
-				id: 'outline', label: 'Outline', type: 'custom',
-				icon: 'ti-list-tree', shown: true, description: '', query: '',
-				read_only: false, opts: {}, field_ids: ['title'],
-				group_by_field_id: null, sort_field_id: 'title', sort_dir: 'asc',
-			}]);
+		// Both config changes go in ONE save. Writes are not readable in the same
+		// tick, so calling enableSubPages() and then re-reading the config returns
+		// the copy from BEFORE it — saving that back silently drops the sub-page
+		// field again, which is exactly how a collection ends up with the view
+		// installed and no nesting.
+		if (needsNesting || needsView) {
+			if (needsNesting) {
+				log('Turning on sub-pages...');
+				conf.fields = (conf.fields || []).concat([Object.assign({}, SUBPAGE_FIELD)]);
+			}
+			if (needsView) {
+				log('Adding a Custom view...');
+				conf.views = (conf.views || []).concat([{
+					id: 'outline', label: 'Outline', type: 'custom',
+					icon: 'ti-list-tree', shown: true, description: '', query: '',
+					read_only: false, opts: {}, field_ids: ['title'],
+					group_by_field_id: null, sort_field_id: 'title', sort_dir: 'asc',
+				}]);
+			}
 			await api.saveConfiguration(conf);
 		}
 
 		const state = this.codeState(api);
-		if (state === 'installed') {
-			log('Already installed. Nothing to write.');
-			return 'done';
+		if (state === 'current') {
+			log('Code is already up to date.');
+			return;
 		}
-		if (state === 'free') {
-			log('Writing the view code...');
+		if (state === 'free' || state === 'outdated') {
+			log(state === 'outdated' ? 'Updating the view code...' : 'Writing the view code...');
 			await api.saveCode(VIEW_SOURCE);
-			log('Installed. Open the collection and click the Outline tab.');
-			return 'done';
+			log('Done. Open the collection and click the Outline tab.');
+			return;
 		}
 
 		// Occupied: hand it to the user rather than destroying their code.
-		log('This collection already has plugin code, which installing would replace.');
-		log('Opening the editor so you can review and merge it yourself. Nothing has been written.');
+		log('This collection already has plugin code of its own.');
+		log('Opening the editor so you can merge it yourself. Nothing was written.');
 		const existing = api.getExistingCodeAndConfig() || {};
-		api.previewPlugin(api.getConfiguration(), VIEW_SOURCE, existing.css || '', true);
-		return 'review';
+		api.previewPlugin(conf, VIEW_SOURCE, existing.css || '', true);
 	}
 
 	/**
@@ -141,7 +162,8 @@ class Plugin extends AppPlugin {
 			await api.saveConfiguration(conf);
 		}
 
-		if (this.codeState(api) === 'installed') {
+		const state = this.codeState(api);
+		if (state === 'current' || state === 'outdated') {
 			log('Clearing the view code...');
 			await api.saveCode(STUB);
 		} else {
@@ -180,13 +202,22 @@ class Plugin extends AppPlugin {
 		}
 	}
 
+	/**
+	 * Each collection owns a box that repaints itself. Actions redraw it when they
+	 * finish, so the summary and the buttons describe the collection as it is now
+	 * rather than as it was when the panel opened.
+	 */
 	renderRow(parent, api) {
+		const box = el('div', parent);
+		box.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--border-color,rgba(128,128,128,.25));';
+		this.paintRow(box, api, []);
+	}
+
+	paintRow(box, api, notes) {
+		while (box.firstChild) box.removeChild(box.firstChild);
 		const s = this.status(api);
 
-		const row = el('div', parent);
-		row.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--border-color,rgba(128,128,128,.25));';
-
-		const left = el('div', row);
+		const left = el('div', box);
 		left.style.cssText = 'flex:1;min-width:0;';
 		const title = el('div', left, s.name);
 		title.style.cssText = 'font-weight:600;';
@@ -196,42 +227,42 @@ class Plugin extends AppPlugin {
 			: s.nests ? 'nests via a self-linking property'
 			: 'no nesting yet');
 		bits.push(s.views ? `${s.views} custom view(s)` : 'no custom view');
-		bits.push(s.code === 'installed' ? 'view code installed'
+		bits.push(s.code === 'current' ? 'view installed'
+			: s.code === 'outdated' ? 'older version installed'
 			: s.code === 'free' ? 'plugin slot empty'
-			: 'HAS OTHER PLUGIN CODE');
-		const meta = el('div', left, bits.join(' · '));
+			: 'has other plugin code');
+		const meta = el('div', left, bits.join(' \u00b7 '));
 		meta.style.cssText = 'font-size:12px;opacity:.7;margin-top:2px;';
 
 		if (s.code === 'occupied') {
-			const warn = el('div', left, 'Installing here opens the code editor for you to merge by hand, so your existing code is not overwritten.');
+			const warn = el('div', left, 'Installing here opens the code editor so you can merge by hand. Your code is not overwritten.');
 			warn.style.cssText = 'font-size:12px;margin-top:4px;color:var(--enum-orange-fg,#c60);';
 		}
 
-		const log = (msg) => {
-			const line = el('div', left, msg);
+		for (const note of notes) {
+			const line = el('div', left, note);
 			line.style.cssText = 'font-size:12px;margin-top:4px;opacity:.85;';
+		}
+
+		const run = (label, fn, primary) => {
+			const btn = el('button', box, label);
+			if (primary) btn.className = 'button-primary';
+			btn.addEventListener('click', async () => {
+				btn.disabled = true;
+				const log = [];
+				const push = (m) => { log.push(m); this.paintRow(box, api, log); };
+				try { await fn(api, push); }
+				catch (err) { log.push(`Failed: ${String(err)}`); }
+				// Repaint once more: the status above was computed before the writes.
+				this.paintRow(box, api, log);
+			});
+			return btn;
 		};
 
-		const installed = s.code === 'installed' && s.views > 0;
-
-		const act = el('button', row, installed ? 'Reinstall' : 'Install');
-		act.className = 'button-primary';
-		act.addEventListener('click', async () => {
-			act.disabled = true;
-			try { await this.install(api, log); }
-			catch (err) { log(`Failed: ${String(err)}`); }
-			act.disabled = false;
-		});
-
-		if (installed) {
-			const rm = el('button', row, 'Remove');
-			rm.addEventListener('click', async () => {
-				rm.disabled = true;
-				try { await this.uninstall(api, log); }
-				catch (err) { log(`Failed: ${String(err)}`); }
-				rm.disabled = false;
-			});
-		}
+		const installed = s.views > 0 && (s.code === 'current' || s.code === 'outdated');
+		run(s.code === 'outdated' ? 'Update' : installed ? 'Reinstall' : 'Install',
+			(a, l) => this.install(a, l), true);
+		if (installed) run('Remove', (a, l) => this.uninstall(a, l), false);
 	}
 }
 
