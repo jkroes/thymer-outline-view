@@ -41,37 +41,45 @@ parent comes back exactly as it was.
 
 ### 2. Add a Custom view
 
-Add a view and choose type Custom. Name it whatever you like; "Outline" is the
-obvious choice.
+In the collection's settings, add a view and choose the type **Custom**. Name it
+whatever you like — "Outline" is the obvious choice. Remember exactly what you
+typed, capitals included; the next step needs it.
 
-### 3. Set that view's id to `outline`
+### 3. Paste in the code and point it at your view
 
-The fiddly step. The plugin registers itself against the view id `outline`, so
-the two have to match or the tab comes up empty.
+Open the collection's plugin code editor and paste in the whole of
+[`plugin.js`](plugin.js). No other edits are needed — the file is written to be
+pasted as-is.
 
-Open the collection's config JSON, find your new view in the `views` array, and
-set its `"id"`:
+Near the top you will find this line:
 
-```json
-{ "id": "outline", "label": "Outline", "type": "custom", ... }
+```js
+this.views.register("outline", (viewContext) => {
 ```
 
-If you'd rather not touch the JSON, do the reverse — leave the id Thymer
-generated and change the `this.views.register("outline", …)` line near the top
-of `plugin.js` to that id.
+Change `"outline"` to your view's name:
 
-Thymer resolves that name against view labels before ids, so a view labelled
-exactly `outline` also works. The match is case-sensitive, though, so "Outline"
-does not, and a rename would silently unhook the view. Matching on the id is the
-one that keeps working.
+```js
+this.views.register("Outline", (viewContext) => {
+```
 
-### 4. Paste in the code
+Save, then open the view's tab. The tree renders.
 
-Plugin → Edit Code. Paste the whole of [`plugin.js`](plugin.js) into Custom
-Code and save. No edits needed; the file is written to be pasted as-is.
+That string is how Thymer finds your view. It is matched against view names
+first and internal ids second, and the match is exact, so `Outline` and
+`outline` are two different things. If you later rename the view, come back and
+change this string to match, or the tab will go blank.
 
-Open the view's tab and the tree renders. To change which properties show on the
-rows, edit the view's shown fields the normal way — the rows follow.
+Only views that are switched on are searched, so make sure the new view is
+visible in the collection's view list.
+
+If you drive Thymer over MCP or the CLI, there is another route: set the view's
+`"id"` to `"outline"` in the collection config and leave the code alone. That id
+cannot be reached from the app's own settings screens, so the rename above is
+the way to do it in the UI.
+
+Once it renders: to change which properties show on the rows, edit the view's
+shown fields the normal way — the rows follow.
 
 ## Keys
 
