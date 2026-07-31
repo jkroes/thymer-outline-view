@@ -70,7 +70,7 @@ rows, edit the view's shown fields the normal way — the rows follow.
 | `⌘Enter` | Open the focused record in the side panel. |
 | `Shift+Enter` | Create a record and open its name for typing in place, rather than navigating to a new page. Leave it unnamed and it is discarded. |
 | `Space` | Peek the focused record in the side panel. The peek follows the selection as you arrow, so you can walk a branch without opening anything. A side panel you already had open is borrowed, then put back on what it was showing. `Enter` or `⌘Enter` commits the peek to a real open. `Escape` dismisses it. |
-| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited. The "Sub-page of" link is left out, so on a collection that nests through sub-pages you reparent from the record itself rather than from here. A self-pointing property you made yourself is editable, and its menu leaves out the row's own descendants so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
+| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited, including the one the tree is built from, so you can re-hang a whole branch without opening the record. That field's menu leaves out the row's own descendants, so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
 | `/` | Focus the search box. |
 | Click | Open the record. `⌘`-click or middle-click opens it in the side panel. `Shift`-click focuses the row without opening it. |
 
@@ -86,13 +86,13 @@ Some parts of Thymer's plugin API that aren't open yet, so custom views can't mi
   is the only way to keep the back-button history tidy.
 - The status bar shows Thymer's default shortcuts, not this view's — a custom
   view can add status bar items but can't replace the set.
-- Sort resets when the view is rebuilt. Thymer's own custom views do the same;
+- Sort resets when the view is rebuilt. Thymer's native views do the same;
   the sort you pick isn't written back to the view's config.
 
 ## Contributing / hacking
 
 `CLAUDE.md` in this repo is the implementation write-up: how the tree is built,
-what the native list view does key-for-key and where this deviates, what
+what the built-in list view does key-for-key and where this deviates, what
 sub-pages actually are underneath, and a long list of app behavior that isn't in
 the SDK docs (most of it read out of the shipped bundle). Read it before
 changing anything — a fair amount of this code looks arbitrary until you know
