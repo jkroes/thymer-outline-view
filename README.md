@@ -81,6 +81,10 @@ Currently, hierarchies like sub-pages assume a single "parent" record, which can
 
 Some parts of Thymer's plugin API that aren't open yet, so custom views can't mimic or alter every feature available to built-in views:
 
+- Every Custom view in the collection becomes an outline. That is what frees you
+  from naming the view or minding its id, but it means a collection running this
+  can't also have a Custom view doing something else — a collection has only one
+  plugin, so there is nothing else for those views to be.
 - No drag-to-reorder and no move mode (`M`). The per-view custom order isn't
   writable from a plugin, so "Custom Order" isn't offered as a sort either.
 - No `Alt+Enter` (create above) — there's no positioned-create call.

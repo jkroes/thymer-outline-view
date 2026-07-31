@@ -373,9 +373,16 @@ id can no longer unhook the view. `customViewHooks` is a plain `Map` on the
 plugin instance, so one `set` per view is all this costs, and ids only need to
 be unique within a collection.
 
-The gap: a view added *after* load isn't registered until the plugin reloads.
-Saving the collection config reloads it, which covers the install path; a
-`collection.updated` subscription would close the rest.
+Adding a Custom view in the app picks it up with no further action — verified
+2026-07-31 by adding a second one to Organizations, which rendered as an outline
+on first click. So whatever the settings screen does on save, it re-runs
+registration. The mechanism was not chased down; `saveConfiguration()` is known
+to reload a plugin, and that is the likely route, but it was not confirmed for
+this path.
+
+Untested: a view arriving by sync from another device or collaborator, which
+reaches the config without a local save. If that ever needs to work, a
+`collection.updated` subscription that re-registers is the lever.
 
 **Custom views get no toolbar and no search row.** The host is a bare
 `<div class='custom-view'>` and declares `supportsViewFilterStatus() → false`.
