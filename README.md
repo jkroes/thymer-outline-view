@@ -65,19 +65,19 @@ paste it into yours.
 
 ## Keys
 
-| key | does |
+| Key | Action |
 |---|---|
-| `↑` `↓` | move between rows; `↑` from the top row goes to the search box |
-| `←` `→` | cycle through rows or buttons on the toolbar |
-| `⌘↑` `⌘↓` | collapse / expand the focused node (`Ctrl` on Windows/Linux) if possible; falls back to `↑` `↓` |
-| `Home` `End` | first / last row |
-| `Enter` | open the focused record in this panel |
-| `⌘Enter` | open it in the side panel |
-| `Shift+Enter` | create a record and open its name for typing right there in the tree, instead of navigating off to a new page. Leave it unnamed and it's discarded |
-| `Space` | peek the focused record in the side panel, and keep arrowing to walk a branch — the panel follows the selection. A side panel you already had open is borrowed, then put back on what it was showing.<br>`↑` `↓` move the peek · `Enter` `⌘Enter` commit it to a real open · `Space` `Escape` dismiss |
-| `E` | property mode: the focused record's fields open as a list underneath it. Not just the row's chips — it's Title, then the chips, then every other editable field, including the parent, so you can re-hang a branch of the tree without opening the record.<br>`↑` `↓` move between fields · `Enter` edit the highlighted one, as an inline box for text and number or a filter menu for choice and record-link, with the row's own descendants left out so you can't make a loop · `Escape` `E` leave |
-| `/` | jump to the search box |
-| Click | open the record; `⌘`-click or middle-click opens it aside; `Shift`-click just focuses |
+| `↑` `↓` | Move between rows. From the top row, `↑` goes to the search box. |
+| `←` `→` | Cycle through rows, or through the toolbar buttons when one of them has focus. |
+| `⌘↑` `⌘↓` | Collapse or expand the focused node. Falls back to `↑` `↓` when there is nothing to collapse or expand. Use `Ctrl` on Windows and Linux. |
+| `Home` `End` | Go to the first or last row. |
+| `Enter` | Open the focused record in this panel. |
+| `⌘Enter` | Open the focused record in the side panel. |
+| `Shift+Enter` | Create a record and open its name for typing in place, rather than navigating to a new page. Leave it unnamed and it is discarded. |
+| `Space` | Peek the focused record in the side panel. The peek follows the selection as you arrow, so you can walk a branch without opening anything. A side panel you already had open is borrowed, then put back on what it was showing. `Enter` or `⌘Enter` commits the peek to a real open. `Escape` dismisses it. |
+| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. The parent is included, so you can re-hang a branch of the tree without opening the record. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. The row's own descendants are left out of that menu, so you cannot create a loop. `Escape` or `E` leaves. |
+| `/` | Focus the search box. |
+| Click | Open the record. `⌘`-click or middle-click opens it in the side panel. `Shift`-click focuses the row without opening it. |
 
 ## Known limits
 
