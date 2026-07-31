@@ -67,8 +67,10 @@ bin/thymercli plugin show Organizations -w W3TZX0YZ4FRCMSHGB976K32N4D --json | j
   below). It does *not* offer Custom Order — that sorts on a per-view drag
   position this view has no way to write, so it could only ever mean creation
   order. A view left with no sort field falls back to Title.
-- **Peek** on Space: opens the focused record in the side panel, follows the
-  selection as you keep arrowing, and a second Space closes that panel.
+- **Peek** on Space: opens the focused record in the side panel and follows the
+  selection as you keep arrowing. A second Space closes that panel — or, if the
+  peek borrowed a panel the user already had open, puts it back on what it was
+  showing.
 - **Property mode on E**: the focused row's fields open as an indented list
   under it, ↑/↓ walk them, Enter edits the highlighted one, Escape or E closes.
   Text and number get an inline input; choice and record-link get the same
@@ -103,7 +105,7 @@ falls through untouched.
 | ⌘/Ctrl+Enter | open aside (other panel); during a peek, commit | same |
 | Shift+Enter | create a card below | create (position not controllable), then the new row's name opens for editing in place |
 | Alt+Enter | create a card above | — no SDK call for positioned create |
-| Space | peek — put the record in the side panel; Space again closes it | same |
+| Space | peek — put the record in the side panel; Space again closes it | same, and a side panel that was already open is restored to its own contents rather than closed |
 | Escape | exit peek, or cancel an untouched new card | closes the peek panel |
 | ⌘+[ / ⌘+] | panel history back / forward | the app's own, but see the peek history note |
 | `/` | focus the collection search box | same |
@@ -149,12 +151,28 @@ component, none of them on the SDK's `PluginPanel`. What it does here:
 |---|---|
 | Space | opens the focused record aside via `openRecordInOtherPanel()` and stores that panel's id |
 | ↑ / ↓ while peeking | selection moves and the aside re-opens onto the new record, so it follows |
-| Space or Escape | `ui.closePanel()` on the stored panel |
+| Space or Escape | closes the panel if the peek opened it, otherwise navigates it back to what it was showing |
 | Enter or ⌘/Ctrl+Enter | commits: the aside becomes a real open and takes focus |
 
 The stored id is re-resolved through `ui.getPanels()` before every use, because
 the user may have closed the panel by hand — without that check, the next arrow
 key reopens a panel they just dismissed.
+
+**A peek borrows an open side panel; it must give it back.** `openRecordInOtherPanel()`
+reuses an existing side panel rather than adding one, so a peek taken while the
+user has something open aside overwrites it. Native peek is a preview *layered
+over* that panel's navigation, and dismissing restores it — so `showPeek()`
+reads the panel's `getNavigation()` **before** the takeover and `hidePeek()`
+either closes the panel (it was ours) or `navigateTo()`s it back (it wasn't).
+Closing unconditionally destroyed a panel the user had opened themselves.
+
+The capture happens on the first Space only. Following the selection re-enters
+`showPeek()` on every arrow key, and capturing again would record the peeked
+record as the thing to restore.
+
+Committing a *borrowed* panel keeps it as it stands rather than running the
+close-and-reopen below: that dance exists only to collapse history entries, and
+throwing away a user's panel to tidy its history is the worse trade.
 
 Three limitations, all from the same missing primitive:
 
@@ -172,7 +190,9 @@ Three limitations, all from the same missing primitive:
   replace flag and its wrapper forwards only the navigation object — so every
   arrow while peeking pushes an entry, and ⌘+[ would walk back through every
   record peeked at. `commitPeek()` works around it by closing the panel and
-  reopening it on the final record, which starts history over. That reopen has
+  reopening it on the final record, which starts history over — but only for a
+  panel the peek opened; a borrowed one is left alone and keeps those entries.
+  That reopen has
   to wait ~220ms: `closePanel()` only kicks off a 150ms `zoomOut` animation and
   removes the panel on a timer afterwards, so an earlier reopen lands in the
   panel that is on its way out and goes down with it. **The visible cost is a

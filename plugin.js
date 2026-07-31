@@ -123,6 +123,11 @@ export class Plugin extends CollectionPlugin {
 			let $menu = null;
 			/** id of the side panel opened by Space-to-peek, if any */
 			let peekPanelId = null;
+			/**
+			 * The navigation the peek panel was showing before the peek borrowed it,
+			 * or null when this view opened the panel itself. Dismissing restores it.
+			 */
+			let peekRestoreNav = null;
 			/** E-mode: {guid, index} — the row whose property list is open, and the highlighted field */
 			let propMode = null;
 			/** guid of a just-created record whose name opens for editing on the next render */
@@ -400,10 +405,27 @@ export class Plugin extends CollectionPlugin {
 				return ui.getPanels().find(p => p.getId() === peekPanelId) || null;
 			};
 
+			/**
+			 * Dismiss the peek. A panel this view opened is closed; a panel that was
+			 * already there when the peek started is put back on whatever it was
+			 * showing. Native peek is a preview layered over the panel's existing
+			 * navigation, so dismissing it restores that navigation — closing the
+			 * panel instead would throw away something the user had open.
+			 */
 			const hidePeek = () => {
 				const panel = peekPanel();
+				const restore = peekRestoreNav;
 				peekPanelId = null;
-				if (panel) ui.closePanel(panel);
+				peekRestoreNav = null;
+				if (!panel) return;
+				if (restore) {
+					panel.navigateTo(restore);
+					const self = ownPanel();
+					if (self) ui.setActivePanel(self);
+					focusView();
+				} else {
+					ui.closePanel(panel);
+				}
 			};
 
 			/**
@@ -421,7 +443,17 @@ export class Plugin extends CollectionPlugin {
 			const commitPeek = () => {
 				const current = rows[selectedIndex];
 				const panel = peekPanel();
+				const borrowed = !!peekRestoreNav;
 				peekPanelId = null;
+				peekRestoreNav = null;
+				// A panel that was already open is kept as it stands: the record is
+				// already in it, and closing it to tidy up its history would destroy a
+				// panel the user opened themselves. Its history keeps an entry per
+				// record peeked at, which is the same limitation described below.
+				if (borrowed) {
+					if (panel) ui.setActivePanel(panel);
+					return;
+				}
 				if (panel) ui.closePanel(panel);
 				// closePanel() only starts a 150ms zoomOut animation and removes the
 				// panel on a timer afterwards, so it is still in the layout and still
@@ -438,6 +470,16 @@ export class Plugin extends CollectionPlugin {
 				if (!current) return;
 				const self = ownPanel();
 				const before = new Set(ui.getPanels().map(p => p.getId()));
+				// Read the panel the peek is about to take over BEFORE taking it over.
+				// `openRecordInOtherPanel()` reuses an existing side panel when there
+				// is one, and by the time the open returns its previous navigation is
+				// gone. Only on the first Space: the follow-the-selection path calls
+				// this again on every arrow, and must not overwrite what it captured.
+				if (!peekPanelId) {
+					const borrowed = ui.getPanels().find(p => !p.isSidebar()
+						&& (!self || p.getId() !== self.getId()));
+					peekRestoreNav = borrowed ? borrowed.getNavigation() : null;
+				}
 				viewContext.openRecordInOtherPanel(current.node.id);
 				// Opening aside hands focus to that panel's editor. The app only calls
 				// a custom view's onKeyboardNavigation when its own component has focus
