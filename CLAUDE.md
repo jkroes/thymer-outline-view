@@ -359,9 +359,23 @@ load-bearing here; several were bugs first.
 register(e,t){ let s = i.getViewByLabelOrId(e); s && i.customViewHooks.set(s.id, ...) }
 ```
 
-It resolves the argument once, by label *or* id. Registering by label works
-until someone renames the view, after which the next load finds nothing and the
-tab renders the app's fallback text. Register by id (`"outline"`).
+It resolves the argument once, matching labels first (exactly, `===`, so
+case-sensitively) and falling back to ids. Either way the resolution happens at
+load: rename the thing you registered against and the next load finds nothing,
+leaving the tab on the app's fallback text.
+
+**So this plugin registers no fixed id at all.** `registerOutlineView()` walks
+`getConfiguration().views`, takes every `type === 'custom'` entry, and registers
+each one. A collection has exactly one plugin, so its custom views cannot belong
+to anything else — claiming all of them is correct, and it makes the view id
+non-load-bearing: a hand edit, a rename, or the `_H()` sanitizer rewriting the
+id can no longer unhook the view. `customViewHooks` is a plain `Map` on the
+plugin instance, so one `set` per view is all this costs, and ids only need to
+be unique within a collection.
+
+The gap: a view added *after* load isn't registered until the plugin reloads.
+Saving the collection config reloads it, which covers the install path; a
+`collection.updated` subscription would close the rest.
 
 **Custom views get no toolbar and no search row.** The host is a bare
 `<div class='custom-view'>` and declares `supportsViewFilterStatus() → false`.
