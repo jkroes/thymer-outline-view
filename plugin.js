@@ -1135,8 +1135,14 @@ class Plugin extends CollectionPlugin {
 					if (hasChildren) {
 						$twisty.appendChild(ui.createIcon('ti-chevron-right'));
 						$twisty.classList.toggle('expanded', isExpanded(node));
-						$twisty.addEventListener('click', (e) => {
+						// On mouseup, not click: the row opens on mouseup, which fires
+						// first, so a click-phase stopPropagation() here toggles the
+						// node AND navigates to it. Left button only, so middle-click
+						// still falls through to the row's open-aside.
+						$twisty.addEventListener('mouseup', (e) => {
+							if (e.button !== 0) return;
 							e.stopPropagation();
+							e.preventDefault();
 							toggle(node);
 						});
 					}
