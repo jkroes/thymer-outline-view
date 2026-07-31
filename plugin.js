@@ -789,6 +789,14 @@ class Plugin extends CollectionPlugin {
 			 * The fields E-mode walks: Title first (native puts the title at the top
 			 * of a card's property list too), then the properties the row already
 			 * shows as chips, minus the types there is no editor for.
+			 *
+			 * `parent_page` is in the skip list, so the sub-page link cannot be edited
+			 * from E-mode — reparenting a sub-page happens on the record page. A
+			 * HAND-MADE self-pointing record field is not skipped and is editable
+			 * here, so whether the tree can be re-hung from the outline depends on
+			 * which kind of hierarchy field the collection uses. (Skipping
+			 * `parent_page` also makes the `setSubPageOf()` branch in the record
+			 * editor unreachable; it is kept for the day the field is let back in.)
 			 */
 			const EDITABLE_TYPES = ['text', 'number', 'choice', 'record'];
 			const EDIT_SKIP_IDS = ['title', 'icon', 'collection', 'parent_page'];
@@ -797,9 +805,8 @@ class Plugin extends CollectionPlugin {
 					&& EDITABLE_TYPES.includes(f.type) && !EDIT_SKIP_IDS.includes(f.id);
 				// The fields the row already shows come first, then everything else
 				// the collection has. Native property mode walks only the card's shown
-				// properties, but the field that shapes the tree (Parent) is usually
-				// NOT one of them, and not being able to reparent from here would miss
-				// the point of editing on an outline.
+				// properties; going wider is what puts a hand-made hierarchy field in
+				// reach, since it is usually not one of the row's chips.
 				const shown = visibleFields().filter(canEdit);
 				const rest = (plugin.getConfiguration().fields || [])
 					.filter(f => canEdit(f) && !shown.some(s => s.id === f.id));

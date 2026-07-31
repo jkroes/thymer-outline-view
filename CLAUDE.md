@@ -244,17 +244,29 @@ What *is* complete is the write side: `PluginProperty` has `set()`,
 
 **The field list is not the row's chips.** Native walks only a card's shown
 properties. `editableFields()` walks Title, then the shown ones, then every
-other active editable field — because the field that shapes the tree
-(`parent_page`) is not one the view displays, and not being able to reparent
-from the outline would miss the point of editing here. `icon` and `collection`
-are skipped, as are read-only fields and the types with no editor
-(`EDITABLE_TYPES` is text, number, choice, record).
+other active editable field, which is what puts a hand-made hierarchy field in
+reach — it is usually not one of the row's chips. `icon` and `collection` are
+skipped, as are read-only fields and the types with no editor (`EDITABLE_TYPES`
+is text, number, choice, record).
+
+**`parent_page` is skipped too, so a sub-page link is NOT editable from E-mode.**
+`EDIT_SKIP_IDS = ['title', 'icon', 'collection', 'parent_page']`. On a
+sub-pages collection — the setup the README recommends — reparenting is done on
+the record page, not from the outline. On a collection nesting through a
+hand-made record field, that field has an ordinary id, isn't skipped, and *is*
+editable here. So whether the tree can be re-hung from the view depends on which
+hierarchy field the collection uses, which is worth deciding on purpose: the
+rationale for the exclusion was never written down, and letting `parent_page`
+back into the list is a one-word change.
 
 **Writes go through the field's own setter where it has one.** A record-link
 field is a plain `prop().set(guid)` — except `parent_page`, which uses
 `record.setSubPageOf(guid)`, since that is where the app's cycle and
-same-collection checks live. The picker also drops the row's own descendants,
-so a cycle can't be offered in the first place; for a field pointing at a
+same-collection checks live. **That branch is currently unreachable**, because
+the skip above keeps `parent_page` out of the editable list; it is what would
+make the field safe to re-admit. The picker also drops the row's own
+descendants, so a cycle can't be offered in the first place — that applies to
+any field pointing back at this collection; for a field pointing at a
 *different* collection the candidates are fetched from that collection
 (`data.getPluginByGuid(field.filter_colguid).getAllRecords()`).
 
