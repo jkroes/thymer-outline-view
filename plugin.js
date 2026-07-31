@@ -1,8 +1,12 @@
 /**
  * "Outline" — a native-list-style custom view for a self-referencing collection.
- * Rows are indented by depth from a "Parent" record-link property, and each
- * node expands/collapses. Includes a rebuilt view toolbar, since custom views
- * are not given the app's own.
+ * Rows are indented by depth from the collection's sub-page link ("Sub-page of"
+ * / `parent_page`), falling back to the first record-link field that points back
+ * at this collection; each node expands/collapses. Includes a rebuilt view
+ * toolbar, since custom views are not given the app's own.
+ *
+ * Nothing here is bound to a particular collection: fields, views, sort and item
+ * name are all read from the collection's config at runtime.
  */
 
 /**
@@ -63,7 +67,7 @@ function buildHierarchy(records, parentFieldId) {
 		}
 	});
 
-	// A Parent cycle leaves its members unreachable from any root. Promote them
+	// A parent cycle leaves its members unreachable from any root. Promote them
 	// rather than letting them vanish from the view.
 	const reachable = new Set();
 	const walk = node => {
