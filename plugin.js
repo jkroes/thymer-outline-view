@@ -196,6 +196,12 @@ class Plugin extends CollectionPlugin {
 			 * folding the results has to work.
 			 */
 			let forceExpanded = new Set();
+			/**
+			 * Guids present only to hold a filtered-in record's place in the tree.
+			 * Empty when no filter is on. Their rows are dimmed, so a search reads as
+			 * its matches with a path down to them rather than as an ordinary tree.
+			 */
+			let contextGuids = new Set();
 
 			let hierarchy = null;
 			/** flattened currently-visible nodes, in display order */
@@ -1070,6 +1076,9 @@ class Plugin extends CollectionPlugin {
 
 					const $row = document.createElement('div');
 					$row.className = 'outline-row';
+					// Only ever set while a filter is on: a context row is one the
+					// filter dropped and the tree needed back.
+					if (contextGuids.has(node.id)) $row.classList.add('is-context');
 					$row.dataset.index = String(index);
 					// Focusable but not in the Tab order: Tab is handled explicitly,
 					// while unhandled keys (Shift+Tab) need a focused node here so the
@@ -1331,6 +1340,33 @@ class Plugin extends CollectionPlugin {
 							overflow: hidden;
 							text-overflow: ellipsis;
 						}
+						/*
+						 * A row the filter dropped, kept only to hold a match's place.
+						 * Dimmed rather than hidden: it still has to read as the path
+						 * down to the match, and it is still a working row — clickable,
+						 * foldable, editable. The matches themselves are left alone, so
+						 * an unfiltered tree looks exactly as it always did.
+						 *
+						 * Recoloring the name alone was not enough to see, at either
+						 * --text-subtle (text-500, one step off the default — invisible)
+						 * or --text-muted (text-800). Fading the WHOLE row instead takes
+						 * the name, the icon, the chips and the timestamp down together,
+						 * which is what makes the matched rows pop out of the column; the
+						 * name also loses its bold, so weight carries the same signal
+						 * where a theme's colors are close together.
+						 */
+						.outline-row.is-context {
+							opacity: .45;
+						}
+						.outline-row.is-context .outline-name {
+							font-weight: 400;
+						}
+						/* Full strength again on hover or focus — a faded row is still a
+						   working row, and it should not look inert while pointed at. */
+						.outline-row.is-context:hover,
+						.outline-row.is-context.selected {
+							opacity: 1;
+						}
 						.outline-count {
 							flex: 0 0 auto;
 							font-size: var(--text-size-small);
@@ -1492,7 +1528,8 @@ class Plugin extends CollectionPlugin {
 					// is on; the tree needs the path down to each of them back.
 					const completed = withAncestors(records, parentFieldId);
 					hierarchy = buildHierarchy(completed.records, parentFieldId);
-					computeForceExpanded(completed.added);
+					contextGuids = completed.added;
+					computeForceExpanded(contextGuids);
 					if (!$list) mount();
 					renderOrphanNote();
 					renderRows();

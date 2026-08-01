@@ -202,7 +202,9 @@ before you write and don't push a config from a different collection.
   it up in the delivered set. The guids added are also the signal that a filter
   is on, since an unfiltered set adds none; every node with a match below it is
   then force-expanded, and collapsing one by hand drops it from that set, so
-  searching and then folding the results works.
+  searching and then folding the results works. Those recovered rows are also
+  marked `is-context` and faded, so a search reads as its matches with a path
+  down to them rather than as an ordinary tree — see the styling note below.
 - **Properties** come from the view's own settings (`getVisiblePropertyIds()`),
   rendered by type — choice as a colored pill, record as a link chip with `↗`,
   number/text as plain text. Editing visible properties in view settings
@@ -745,6 +747,16 @@ writes that key, and falls back to the old fixed id/label so pre-bindings
 installs are still recognised and removable.
 
 ## Gotchas in this code
+
+- **Fading the context rows had to be opacity on the whole row.** Recoloring the
+  name alone was invisible: `--text-subtle` is `--color-text-500` against a
+  default of `--color-text-400`, one step in every shipped theme, and even
+  `--text-muted` (text-800) did not separate enough to see at a glance in a
+  column of rows. `.outline-row.is-context { opacity: .45 }` takes the name,
+  icon, chips and stamp down together, which is what makes the matches stand
+  out; hover and selection restore it to 1, since a faded row is still
+  clickable, foldable and editable. Token values per theme are in
+  `examples/community/thymer-css-tokens/`.
 
 - `ROW_PAD_X` / `TWISTY_W` / `ROW_GAP` / `DEPTH_STEP` drive row indentation,
   the property-row indent, and the create card's left padding. `TWISTY_W` and

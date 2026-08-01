@@ -9,7 +9,9 @@ A collection view that shows your records as an indented, collapsible tree inste
 - **Search that keeps its place.** Thymer's own search box narrows the view to the
   matches alone, which would leave the tree flat and unfoldable. This puts each
   match's parents back, so you can still see where in the tree a hit lives, and
-  still fold the branches while the search is on.
+  still fold the branches while the search is on. Those parents are faded, so
+  the matches themselves stay easy to pick out; point at one, or select it, and
+  it comes back to full strength.
 - **Row properties.** Whichever properties the view is set to show
   appear as chips — choices as colored pills, links as clickable chips. Chips
   line up in a right-hand column, and wrap to a second line when space is limited.
