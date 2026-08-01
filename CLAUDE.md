@@ -218,9 +218,10 @@ before you write and don't push a config from a different collection.
   The view draws only the tree, the create card, and one line above the rows for
   the orphaned-property warning.
 - **Peek** on Space: opens the focused record in the side panel and follows the
-  selection as you keep arrowing. A second Space closes that panel — or, if the
-  peek borrowed a panel the user already had open, puts it back on what it was
-  showing.
+  selection as you keep arrowing. Escape closes that panel — or, if the peek
+  borrowed a panel the user already had open, puts it back on what it was
+  showing. A second Space does NOT dismiss: native dropped that toggle (noted
+  2026-08-01), so Space only ever peeks.
 - **Property mode on E**: the focused row's fields open as an indented list
   under it, ↑/↓ walk them, Enter edits the highlighted one, Escape or E closes.
   Text and number get an inline input; choice and record-link get the same
@@ -255,7 +256,7 @@ falls through untouched.
 | ⌘/Ctrl+Enter | open aside (other panel); during a peek, commit | same |
 | Shift+Enter | create a card below | create (position not controllable), then the new row's name opens for editing in place |
 | Alt+Enter | create a card above | — no SDK call for positioned create |
-| Space | peek — put the record in the side panel; Space again closes it | same, and a side panel that was already open is restored to its own contents rather than closed |
+| Space | peek — put the record in the side panel; Escape closes it (the double-Space toggle was dropped) | same, and a side panel that was already open is restored to its own contents rather than closed |
 | Escape | exit peek, or cancel an untouched new card | closes the peek panel |
 | ⌘+[ / ⌘+] | panel history back / forward | the app's own, but see the peek history note |
 | `/` | focus the collection search box | same, focusing the app's box. The app binds this key inside its card views, NOT app-wide, so a custom view has to do it itself |
@@ -300,9 +301,9 @@ component, none of them on the SDK's `PluginPanel`. What it does here:
 
 | key | what happens |
 |---|---|
-| Space | opens the focused record aside via `openRecordInOtherPanel()` and stores that panel's id |
+| Space | opens the focused record aside via `openRecordInOtherPanel()` and stores that panel's id; pressing it again re-peeks rather than dismissing |
 | ↑ / ↓ while peeking | selection moves and the aside re-opens onto the new record, so it follows |
-| Space or Escape | closes the panel if the peek opened it, otherwise navigates it back to what it was showing |
+| Escape | closes the panel if the peek opened it, otherwise navigates it back to what it was showing |
 | Enter or ⌘/Ctrl+Enter | commits: the aside becomes a real open and takes focus |
 
 The stored id is re-resolved through `ui.getPanels()` before every use, because

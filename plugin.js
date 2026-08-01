@@ -616,10 +616,12 @@ class Plugin extends CollectionPlugin {
 				peekPanelId = opened ? opened.getId() : null;
 			};
 
-			const togglePeek = () => {
-				if (peekPanelId) hidePeek();
-				else showPeek();
-			};
+			/**
+			 * Space peeks; a SECOND Space does not dismiss. Native dropped the toggle
+			 * — Escape is the way out now — so pressing it again just re-peeks the
+			 * focused row, which is what arrowing through a peek already does.
+			 */
+			const peekSelected = () => showPeek();
 
 			/**
 			 * Row geometry, in one place: a row is [pad][twisty][gap][icon...], and
@@ -1691,7 +1693,7 @@ class Plugin extends CollectionPlugin {
 					}
 					if (e.key === ' ') {
 						e.preventDefault();
-						togglePeek();
+						peekSelected();
 						return;
 					}
 
