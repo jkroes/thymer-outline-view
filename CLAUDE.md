@@ -325,6 +325,18 @@ Committing a *borrowed* panel keeps it as it stands rather than running the
 close-and-reopen below: that dance exists only to collapse history entries, and
 throwing away a user's panel to tidy its history is the worse trade.
 
+**Both peek workarounds were re-tested on 2026-08-01** (desktop app 1.0.18,
+after custom views gained the native toolbar) by switching each off and using
+the view: with only the synchronous focus grab the aside's editor takes the
+keyboard, and without the close-and-reopen `⌘[` walks back through every record
+the peek passed over. Upstream `types.d.ts` was byte-identical to the vendored
+copy that day, so no replace-navigation call had landed. The app does have real
+peek internally — `previewRecord()`, `commitRecordPreview()`,
+`dismissRecordPreview()`, `getPeekStatusBarContext()` on the records-view
+component — but the wrapper a custom view is handed exposes only
+`openRecordInThisPanel()` and `openRecordInOtherPanel()`, so none of it is
+reachable. Re-check when the SDK panel API grows.
+
 Three limitations, all from the same missing primitive:
 
 - **Focus has to be stolen back, on a timer.** `openRecordInOtherPanel()` gives

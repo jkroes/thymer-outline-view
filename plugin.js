@@ -561,6 +561,8 @@ class Plugin extends CollectionPlugin {
 					if (panel) ui.setActivePanel(panel);
 					return;
 				}
+				// Still required as of 1.0.18 / 2026-08-01: without this, ⌘[ after a
+				// commit walks back through every record the peek passed over.
 				if (panel) ui.closePanel(panel);
 				// closePanel() only starts a 150ms zoomOut animation and removes the
 				// panel on a timer afterwards, so it is still in the layout and still
@@ -600,6 +602,8 @@ class Plugin extends CollectionPlugin {
 					if (self) ui.setActivePanel(self);
 					focusView();
 				};
+				// Still required as of 1.0.18 / 2026-08-01: with only the synchronous
+				// grab the aside's editor keeps the keyboard.
 				takeFocusBack();
 				requestAnimationFrame(takeFocusBack);
 				setTimeout(takeFocusBack, 120);
