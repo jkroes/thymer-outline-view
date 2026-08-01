@@ -194,12 +194,15 @@ before you write and don't push a config from a different collection.
 
 - **Indented rows** by depth, each node expandable. Collapse state persists per
   device in `localStorage` under `outline-collapsed:<collection name>`.
-- **Search** filters on the record name and every visible property. A match
-  keeps its ancestors visible so the path down to it stays readable; those
-  ancestors are force-expanded via a separate set, so the twisty still works
-  mid-search. From inside the box, `Enter` opens the selected row and `↓` blurs
-  the box for the first row (`focusFromCollectionSearch`); `↑` goes to the active
-  view tab and `Escape` clears the filter.
+- **Ancestor rebuild** (`withAncestors()`): the app's search and filters narrow
+  the record set before it reaches the view, and they deliver the matches ALONE
+  — a matched grandchild arrives with neither parent, which flattens the tree
+  and takes its twisties with it. Each match's ancestors are walked back in via
+  `linkedRecord()`, which resolves the linked record itself rather than looking
+  it up in the delivered set. The guids added are also the signal that a filter
+  is on, since an unfiltered set adds none; every node with a match below it is
+  then force-expanded, and collapsing one by hand drops it from that set, so
+  searching and then folding the results works.
 - **Properties** come from the view's own settings (`getVisiblePropertyIds()`),
   rendered by type — choice as a colored pill, record as a link chip with `↗`,
   number/text as plain text. Editing visible properties in view settings
@@ -209,13 +212,9 @@ before you write and don't push a config from a different collection.
   x, and drop to a second line — **left-aligned** under the row icon — when
   they don't. The name ellipsises rather than wrapping, and the stamp holds
   line 1 either way. See `restack()` below.
-- **Rebuilt toolbar** (custom views get none — see below): view tabs, New
-  <item>, sort field, sort direction. View management — add, rename, configure —
-  is left to the app's own collection-settings screen.
-- **Sort menu** offers the same fields the app does, from its own predicate (see
-  below). It does *not* offer Custom Order — that sorts on a per-view drag
-  position this view has no way to write, so it could only ever mean creation
-  order. A view left with no sort field falls back to Title.
+- **The toolbar and the search box are the app's own** — see the note below.
+  The view draws only the tree, the create card, and one line above the rows for
+  the orphaned-property warning.
 - **Peek** on Space: opens the focused record in the side panel and follows the
   selection as you keep arrowing. A second Space closes that panel — or, if the
   peek borrowed a panel the user already had open, puts it back on what it was
@@ -223,7 +222,7 @@ before you write and don't push a config from a different collection.
 - **Property mode on E**: the focused row's fields open as an indented list
   under it, ↑/↓ walk them, Enter edits the highlighted one, Escape or E closes.
   Text and number get an inline input; choice and record-link get the same
-  filter menu the sort button uses. See below for how the field list is chosen
+  filter menu the E-mode choice fields use. See below for how the field list is chosen
   and how the writes are made.
 - **New \<item\> leaves the row in place** with its name in edit mode, rather
   than navigating to the new page. Leaving it unnamed discards the record, as
@@ -244,10 +243,10 @@ falls through untouched.
 | input | native list view | here |
 |---|---|---|
 | ↓ | next row, wrapping past the last via `(r % len + len) % len`; upstream of the rows it walks the chain below | same |
-| ↑ | previous row; from the **first** row the search box, then the active view tab, then the panel title | same up to the view tab. The title is the app's, so ArrowUp there is left alone |
-| Tab | view tabs → the buttons to their right → search box → rows, then steps down the rows and wraps | same. Toolbar Tab is moved by hand: the browser default never reaches the view, though Shift+Tab's does |
+| ↑ | previous row; from the **first** row the search box, then the active view tab, then the panel title | wraps to the last row instead. Everything above the rows is the app's own DOM now, and plugin code must not reach into it to move focus |
+| Tab | view tabs → the buttons to their right → search box → rows, then steps down the rows and wraps | steps down the rows and wraps. The part of the chain above the rows belongs to the app |
 | Shift+Tab | **no defined behavior.** `Wi(e)` normalizes it to `"Shift+Tab"`, which matches no case in the cards switch, so it falls through with no `preventDefault` and the browser's focus order decides — starting from the card, its title, or a property row, whichever holds focus. Lands on the toolbar or the search box seemingly at random | same: left unhandled on purpose. Reaching the *same* elements needed the selected row to hold real DOM focus — see below |
-| ← / → | move by one grid column — a no-op in a 1-column list, so the app reads them as move-panel-left/right | cycle rows, ← up and → down, both wrapping. On a toolbar button they cycle along the buttons instead. Swallowed either way, or the panel shifts |
+| ← / → | move by one grid column — a no-op in a 1-column list, so the app reads them as move-panel-left/right | cycle rows, ← up and → down, both wrapping. Swallowed, or the panel shifts |
 | ⌘/Ctrl + ↑ / ↓ | — | collapse / expand. ⌘↓ opens a collapsed node, ⌘↑ closes an open one or climbs to the parent; with nothing to open or close, both fall back to plain ↑/↓ so the key is never dead on a leaf |
 | Home / End | first / last card | same |
 | Enter | open focused record in this panel; during a peek, *commit* the preview | same |
@@ -257,7 +256,7 @@ falls through untouched.
 | Space | peek — put the record in the side panel; Space again closes it | same, and a side panel that was already open is restored to its own contents rather than closed |
 | Escape | exit peek, or cancel an untouched new card | closes the peek panel |
 | ⌘+[ / ⌘+] | panel history back / forward | the app's own, but see the peek history note |
-| `/` | focus the collection search box | same |
+| `/` | focus the collection search box | left to the app, which owns that box and already binds the key |
 | M | move mode — keyboard drag-reorder, refused while sorted | — no SDK write for the per-view `$o:<viewId>` order key |
 | E | property mode — ↑/↓ through a card's properties, Enter edits | same, drawn and driven here: the app's card editor is unreachable, so the field list, the highlight and the editors are all rebuilt. See "Property mode" below |
 | trash shortcut | trash the focused record | — not implemented |
@@ -275,14 +274,15 @@ at all.
 
 The search box is part of the navigation loop in both directions — ↓ from the
 box focuses the **first** row (`focusFromCollectionSearch`), not the row after
-the current one.
+the current one. That loop is now the app's to drive; the view only sees the
+keys that arrive while one of its own rows has focus.
 
 **The selected row has to hold real DOM focus** (`tabIndex = -1` — focusable,
 but out of the Tab order this view drives itself). Keys the view leaves
 unhandled are resolved by the browser from whatever has focus, and with focus
 parked on the view root those walked *out* of the view: the root precedes
 everything inside it in document order, so Shift+Tab jumped to the panel
-breadcrumb rather than back to the search box.
+breadcrumb rather than to the row above.
 
 **Keys aimed at something else must be let through.** The hook fires even while
 a node outside the view holds focus — the panel's breadcrumb button being the
@@ -527,11 +527,21 @@ which was not there before. The app provisions it; a config writer should expect
 fields it did not add to appear after any settings save, which is one more
 reason to patch what you just read rather than push a remembered config.
 
-**Custom views get no toolbar and no search row.** The host is a bare
-`<div class='custom-view'>` and declares `supportsViewFilterStatus() → false`.
-The whole `records-view-toolbar-inner` component — tabs, add view, create,
-configure, sort, *and* the search field — belongs to the panel, not the view,
-and is absent. Hence the hand-built toolbar and search box.
+**Custom views now GET the toolbar and the search row.** They did not until the
+release noted below, and this plugin used to rebuild both — view tabs, New
+<item>, a sort-field menu and a direction toggle, plus a search box that matched
+record names and visible properties. All of it was deleted once the app supplied
+its own, since the two sat stacked on screen, one above the other.
+
+Verified live 2026-08-01 on Organizations, against desktop app 1.0.18 (the
+client release that shipped it was not pinned down). What the app's toolbar
+gives a custom view: view tabs, `+`, New <item>, filters, sort field, sort
+direction, and the collection search box.
+
+One consequence to keep in mind: **the app's search hands the view its matches
+and nothing else.** No ancestors, so a custom view that draws a tree gets a flat
+list with no twisties unless it puts the missing records back — see the ancestor
+rebuild above.
 
 **`makeNormalLayout()` is the overview layout, not the narrow one.**
 
@@ -550,7 +560,9 @@ one value each.
 instance and refreshes; `sort_field_id` in the config is read once by
 `setInitView()` and never written back. Anything reflecting the current sort
 has to track it in view state, seeded from the config. Sort therefore resets
-when the view is re-created — native custom views behave the same way.
+when the view is re-created — native custom views behave the same way. The view
+no longer calls it: sorting is the app toolbar's job, and the records arrive in
+the order it chose.
 
 **`getWorkspaceGuid()` is on `AppPlugin` only.** `CollectionPlugin` is a
 separate class and does not have it. Take the guid from the panel's own
@@ -558,8 +570,9 @@ separate class and does not have it. Take the guid from the panel's own
 takes down the entire view with no error in the UI, so keep that scope to
 declarations.
 
-**Navigation shape** for the view tabs, via `panel.navigateTo()` — this is what
-the native switcher does:
+**Navigation shape** for switching views, via `panel.navigateTo()` — this is
+what the native switcher does. Kept as reference; the view no longer draws tabs
+of its own:
 
 ```js
 { workspaceGuid, type: 'overview', rootId: collectionGuid, subId: viewId }
@@ -571,7 +584,8 @@ where `state` is `{ openViewId }` for "Edit View..." or `{ openAddView: true }`
 for the toolbar's `+`. This view no longer navigates there — see the panel note
 below for why driving that screen from a plugin is awkward.
 
-**Which fields the app offers as sort keys** — its predicate, not the schema:
+**Which fields the app offers as sort keys** — its predicate, not the schema.
+Reference only now that the app's own sort menu is back:
 
 ```js
 fp(f) = f.active && f.id !== 'icon'
@@ -673,7 +687,7 @@ Links to a *different* collection are excluded because their targets are not in
 this collection's record set — nesting by one is a grouping, not an outline.
 
 **A binding pointing at a deleted property does not fall back.** It reports
-`orphaned`, the rows render flat, and the toolbar says so. Falling back to
+`orphaned`, the rows render flat, and a line above them says so. Falling back to
 sub-pages would leave a view labelled for one property quietly drawing another
 with nothing on screen admitting it. The state is transient: the installer's
 reconcile deletes orphaned views.
@@ -689,7 +703,7 @@ hand-made `Reports to`, and one pre-bindings `outline` view: Repair adopted the
 existing view (binding written to `parent_page`, columns and label untouched, no
 duplicate) and added `outline_FRPRTSTO0000001` / "Outline: Reports to" bound to
 the new property, both trees rendering their own shape. Deleting `Reports to`
-left its view flat with the toolbar note; the next Repair removed that view and
+left its view flat with the warning line; the next Repair removed that view and
 left the other alone. Label re-sync was checked the same way: a view carrying a
 stale generated label and a hand-named view, both bound to the same renamed
 property — Repair renamed the first and left the second alone.

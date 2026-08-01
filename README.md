@@ -6,15 +6,13 @@ A collection view that shows your records as an indented, collapsible tree inste
 
 - **A real tree.** Indented rows, one toggle per parent, collapse state remembered
   per device.
-- **Search that keeps its place.** Filtering matches record names and every visible
-  property, and keeps a hit's parents on screen so you can see where in the tree
-  it lives. `Enter` opens the top hit without leaving the box, and `↓` drops you
-  into the results.
+- **Search that keeps its place.** Thymer's own search box narrows the view to the
+  matches alone, which would leave the tree flat and unfoldable. This puts each
+  match's parents back, so you can still see where in the tree a hit lives, and
+  still fold the branches while the search is on.
 - **Row properties.** Whichever properties the view is set to show
   appear as chips — choices as colored pills, links as clickable chips. Chips
   line up in a right-hand column, and wrap to a second line when space is limited.
-- **A working toolbar.** Thymer doesn't give custom views the usual toolbar, so this
-  rebuilds it: view tabs, a create button, sort field and direction.
 - **So many shortcuts.** You'll forget this isn't a built-in view. See [Keys](#keys).
 
 ## Install
@@ -99,8 +97,8 @@ to the first eligible property if the collection has no sub-pages.
 **The property is what a view is made from.** Running Install again re-creates a
 view you deleted, because the property is still there. To get rid of a view for
 good, delete its property — the next Install clears the view away. Until you run
-it, a view whose property is gone lists everything flat and says so in its
-toolbar.
+it, a view whose property is gone lists everything flat and says so in a line
+above the rows.
 
 Turning sub-pages back off removes the "Sub-page of" property, so its view loses
 that hierarchy. The links survive: turn sub-pages on again and every parent
@@ -110,17 +108,16 @@ comes back exactly as it was.
 
 | Key | Action |
 |---|---|
-| `↑` `↓` | Move between rows. From the top row, `↑` goes to the search box. |
-| `←` `→` | Cycle through rows, or through the toolbar buttons when one of them has focus. |
+| `↑` `↓` | Move between rows, wrapping at either end. |
+| `←` `→` | Cycle through rows. |
 | `⌘↑` `⌘↓` | Collapse or expand the focused node. When there is nothing to open, `⌘↓` moves to the next row. When there is nothing to close, `⌘↑` climbs to the parent, or moves to the previous row if the node is already a root. |
-| `Tab` | Move to the next row, wrapping at the end. From the search box, move into the list. `Shift+Tab` is left to the browser, as it is in Thymer's own list view. |
+| `Tab` | Move to the next row, wrapping at the end. `Shift+Tab` is left to the browser, as it is in Thymer's own list view. |
 | `Home` `End` | Go to the first or last row. |
 | `Enter` | Open the focused record in this panel. |
 | `⌘Enter` | Open the focused record in the side panel. |
 | `Shift+Enter` | Create a record and open its name for typing in place, rather than navigating to a new page. Leave it unnamed and it goes to the trash, recoverable like any other trashed record. |
 | `Space` | Peek the focused record in the side panel. The peek follows the selection as you arrow, so you can walk a branch without opening anything. A side panel you already had open is borrowed, then put back on what it was showing. `Enter` or `⌘Enter` commits the peek to a real open. `Space` again or `Escape` dismisses it. |
 | `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited, including the one the tree is built from, so you can move a whole branch without opening the record. That field's menu leaves out the row's own descendants, so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
-| `/` | Focus the search box. `Escape` there clears what you typed. |
 | Click | Open the record. `⌘`-click or middle-click opens it in the side panel. `Shift`-click focuses the row without opening it. |
 
 ## Known limits
