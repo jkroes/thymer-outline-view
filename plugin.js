@@ -361,6 +361,9 @@ class Plugin extends CollectionPlugin {
 				if (!$list) return;
 				$list.querySelectorAll('.outline-row').forEach(($row, i) => {
 					$row.classList.toggle('selected', i === selectedIndex);
+					// The roving Tab stop moves with the selection, so Tab back into
+					// the view returns to the row the user left.
+					$row.tabIndex = i === selectedIndex ? 0 : -1;
 				});
 				const $selected = $list.querySelector(`.outline-row[data-index="${selectedIndex}"]`);
 				if ($selected) {
@@ -370,7 +373,11 @@ class Plugin extends CollectionPlugin {
 					// from the view root — which precedes everything inside it in
 					// document order — it walks OUT of the view to the panel's
 					// breadcrumb. From the row it reaches the search box, as native does.
-					if (document.activeElement !== $search) {
+					//
+					// Not while the caret is in the app's search box: refreshes land on
+					// every keystroke there, and stealing focus back would make the box
+					// impossible to type in.
+					if (document.activeElement !== appSearchInput()) {
 						$selected.focus({ preventScroll: true });
 					}
 				}
@@ -467,6 +474,36 @@ class Plugin extends CollectionPlugin {
 				if (!$root) return;
 				$root.tabIndex = -1;
 				$root.focus({ preventScroll: true });
+			};
+
+			/**
+			 * The app's own view chrome — the toolbar and the search row it now gives
+			 * a custom view. Both live in `.custom-view`, above the node this view
+			 * draws into, so they are reachable from the view root.
+			 *
+			 * Focusing them is a read of the app's markup, not a write: nothing here
+			 * creates, removes or rewrites an app node. It is still the app's DOM, so
+			 * every lookup is a fresh query that fails quietly — a renamed class costs
+			 * one key its effect, nothing more.
+			 */
+			const appChrome = () => ($root && $root.closest('.custom-view')) || null;
+
+			/** The app's collection search box, or null if the markup moved. */
+			const appSearchInput = () => {
+				const $chrome = appChrome();
+				return ($chrome && $chrome.querySelector('.records-view-query-wrap input')) || null;
+			};
+
+			/**
+			 * Hand focus up to the app's search box, which is where native sends ↑
+			 * from the first row. Its own key handling takes over from there: ↑ again
+			 * goes to the active view tab, and ↑ from the tab to the page title.
+			 */
+			const focusAppSearch = () => {
+				const $input = appSearchInput();
+				if (!$input) return false;
+				$input.focus();
+				return true;
 			};
 
 			/** The peek panel, re-resolved each time — panel objects don't outlive much. */
@@ -1080,10 +1117,15 @@ class Plugin extends CollectionPlugin {
 					// filter dropped and the tree needed back.
 					if (contextGuids.has(node.id)) $row.classList.add('is-context');
 					$row.dataset.index = String(index);
-					// Focusable but not in the Tab order: Tab is handled explicitly,
-					// while unhandled keys (Shift+Tab) need a focused node here so the
+					// Roving tabindex: the selected row is the view's single stop in the
+					// browser's Tab order, every other row is focusable only by script.
+					// Tab out of the app's search box has to land ON a row for this
+					// view's own Tab handling to take over and step the list, the way
+					// the built-in List view does; with every row at -1 the browser
+					// walked straight past them to the create card and out of the view.
+					// Unhandled keys (Shift+Tab) still need the focused row here so the
 					// browser walks focus from the row, not from the view root.
-					$row.tabIndex = -1;
+					$row.tabIndex = index === selectedIndex ? 0 : -1;
 					$row.dataset.guid = node.id;
 					// restack() needs the depth indent to line the chips up under the
 					// row icon once they are out of the title line.
@@ -1618,8 +1660,14 @@ class Plugin extends CollectionPlugin {
 						return;
 					}
 
-					// "/" is left alone: the search box it jumps to is the panel's own
-					// now, and the app already binds the key to it.
+					// "/" focuses the collection search box, as it does in the native
+					// views. The app binds this key inside its CARD views
+					// (`onKeyboardNavigation` → `focusCollectionSearch()`), not app-wide,
+					// so a custom view is handed nothing and has to do it itself.
+					if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+						if (focusAppSearch()) e.preventDefault();
+						return;
+					}
 
 					// Cmd/Ctrl+Enter opens aside, matching the native card handler.
 					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -1681,11 +1729,13 @@ class Plugin extends CollectionPlugin {
 							break;
 						case 'ArrowUp':
 							e.preventDefault();
-							// Native hands focus back to the panel's search box from the
-							// first row. That box belongs to the app, and plugin code has
-							// no business reaching into the app's DOM to focus it, so the
-							// selection wraps to the last row instead.
-							selectNext(-1);
+							// ↑ does NOT wrap, unlike ↓: from the first row native hands
+							// focus up to the search box, then the view tabs, then the
+							// title. Only the first step is ours to make — the app's own
+							// toolbar handler covers the rest. With no search box to be
+							// found, the selection simply stays put.
+							if (selectedIndex === 0) focusAppSearch();
+							else selectNext(-1);
 							break;
 						// ←/→ cycle rows like ↑/↓ do. They also have to be swallowed:
 						// left alone, the app moves the panel left/right.

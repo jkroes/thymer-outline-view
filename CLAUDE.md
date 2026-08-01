@@ -245,8 +245,8 @@ falls through untouched.
 | input | native list view | here |
 |---|---|---|
 | ↓ | next row, wrapping past the last via `(r % len + len) % len`; upstream of the rows it walks the chain below | same |
-| ↑ | previous row; from the **first** row the search box, then the active view tab, then the panel title | wraps to the last row instead. Everything above the rows is the app's own DOM now, and plugin code must not reach into it to move focus |
-| Tab | view tabs → the buttons to their right → search box → rows, then steps down the rows and wraps | steps down the rows and wraps. The part of the chain above the rows belongs to the app |
+| ↑ | previous row; from the **first** row the search box, then the active view tab, then the panel title | same. ↑ does not wrap; from the first row it focuses the app's search box, and the app's own toolbar handler carries it on to the view tab and the title |
+| Tab | view tabs → the buttons to their right → search box → rows, then steps down the rows and wraps | same. The chain above the rows is the app's; the rows are reached because the selected one is a roving Tab stop (see below) |
 | Shift+Tab | **no defined behavior.** `Wi(e)` normalizes it to `"Shift+Tab"`, which matches no case in the cards switch, so it falls through with no `preventDefault` and the browser's focus order decides — starting from the card, its title, or a property row, whichever holds focus. Lands on the toolbar or the search box seemingly at random | same: left unhandled on purpose. Reaching the *same* elements needed the selected row to hold real DOM focus — see below |
 | ← / → | move by one grid column — a no-op in a 1-column list, so the app reads them as move-panel-left/right | cycle rows, ← up and → down, both wrapping. Swallowed, or the panel shifts |
 | ⌘/Ctrl + ↑ / ↓ | — | collapse / expand. ⌘↓ opens a collapsed node, ⌘↑ closes an open one or climbs to the parent; with nothing to open or close, both fall back to plain ↑/↓ so the key is never dead on a leaf |
@@ -258,7 +258,7 @@ falls through untouched.
 | Space | peek — put the record in the side panel; Space again closes it | same, and a side panel that was already open is restored to its own contents rather than closed |
 | Escape | exit peek, or cancel an untouched new card | closes the peek panel |
 | ⌘+[ / ⌘+] | panel history back / forward | the app's own, but see the peek history note |
-| `/` | focus the collection search box | left to the app, which owns that box and already binds the key |
+| `/` | focus the collection search box | same, focusing the app's box. The app binds this key inside its card views, NOT app-wide, so a custom view has to do it itself |
 | M | move mode — keyboard drag-reorder, refused while sorted | — no SDK write for the per-view `$o:<viewId>` order key |
 | E | property mode — ↑/↓ through a card's properties, Enter edits | same, drawn and driven here: the app's card editor is unreachable, so the field list, the highlight and the editors are all rebuilt. See "Property mode" below |
 | trash shortcut | trash the focused record | — not implemented |
@@ -747,6 +747,30 @@ writes that key, and falls back to the old fixed id/label so pre-bindings
 installs are still recognised and removable.
 
 ## Gotchas in this code
+
+- **The app's view chrome is reachable, and three keys need it.** The toolbar and
+  search row live in `.custom-view`, the node wrapping the one this view draws
+  into, so `$root.closest('.custom-view')` reaches them:
+  `.records-view-query-wrap input` is the search box,
+  `.records-view-switcher-button.is-active` the active view tab. `/` and ↑-from-
+  the-top-row focus that input; the app's own toolbar handler takes over from
+  there (↑ → view tab → title, ↓ → back to the view). Every lookup is a fresh
+  query that fails quietly, since this is the app's markup and a renamed class
+  should cost one key its effect, nothing more. Reading and focusing app nodes is
+  not the same as writing to them — the no-touching-app-DOM rule is about
+  mutation.
+- **Rows use a roving tabindex.** The selected row is `tabIndex = 0` and every
+  other row `-1`, moved by `setSelection()`. With all rows at -1 the browser
+  walked straight past them — Tab out of the app's search box landed on the
+  create card and left the view, because the app binds Tab nowhere here and
+  document order decides. The view's own Tab handling only runs once a row has
+  focus.
+- **Deleting the search box left `setSelection()` referring to it.** The stale
+  `$search` threw a ReferenceError on every selection change, after the highlight
+  was repainted but before the row took focus — so rows never held focus and
+  most shortcuts appeared dead while ↑/↓ looked fine. Worth remembering the shape:
+  a key hook that half-works points at a throw partway through, not at a missing
+  binding.
 
 - **Fading the context rows had to be opacity on the whole row.** Recoloring the
   name alone was invisible: `--text-subtle` is `--color-text-500` against a
