@@ -2,8 +2,8 @@
  * "Outline" — a native-list-style custom view for a self-referencing collection.
  * Rows are indented by depth from the collection's sub-page link ("Sub-page of"
  * / `parent_page`), falling back to the first record-link field that points back
- * at this collection; each node expands/collapses. Includes a rebuilt view
- * toolbar, since custom views are not given the app's own.
+ * at this collection; each node expands/collapses. The view toolbar is the
+ * app's own — custom views are given it, so this draws only the tree.
  *
  * Nothing here is bound to a particular collection: fields, views, sort and item
  * name are all read from the collection's config at runtime.
@@ -33,6 +33,40 @@ function timeAgo(date) {
 	const months = Math.floor(days / 30);
 	if (months < 12) return `${months}mo ago`;
 	return `${Math.floor(months / 12)}y ago`;
+}
+
+/**
+ * Re-add the ancestors of every record in `records` that the set is missing.
+ *
+ * The app's own search and filters narrow the record set BEFORE it reaches the
+ * view, and they keep only the matches — so a matched grandchild arrives with
+ * neither its parent nor its grandparent, which leaves the tree a flat list
+ * with no twisties to expand. Walking `linkedRecord()` up from each match puts
+ * the path back: that call resolves the linked record itself, not a lookup in
+ * the delivered set, so ancestors filtered out are still reachable.
+ *
+ * Returns the completed set plus the guids that were added, which is also the
+ * signal that a filter is on at all — an unfiltered set is already complete and
+ * adds nothing.
+ */
+function withAncestors(records, parentFieldId) {
+	const byGuid = new Map(records.map(record => [record.guid, record]));
+	const added = new Set();
+	if (parentFieldId) {
+		records.forEach(record => {
+			let parent = record.linkedRecord(parentFieldId);
+			// A parent already in the map ends the walk: it carries its own
+			// ancestors up from where it sits. The depth cap is what stops a
+			// cyclic link from spinning here (buildHierarchy handles the cycle
+			// itself, but only once it has the records).
+			for (let depth = 0; parent && !byGuid.has(parent.guid) && depth < 100; depth++) {
+				byGuid.set(parent.guid, parent);
+				added.add(parent.guid);
+				parent = parent.linkedRecord(parentFieldId);
+			}
+		});
+	}
+	return { records: Array.from(byGuid.values()), added };
 }
 
 /**
@@ -155,18 +189,27 @@ class Plugin extends CollectionPlugin {
 			} catch (err) {
 				collapsed = new Set();
 			}
-			/** guids held open to reveal search hits, recomputed as the filter changes */
+			/**
+			 * Guids held open so a filtered-in record is not buried under a
+			 * collapsed ancestor. Recomputed on every refresh, and dropped from a
+			 * node the moment the user collapses it by hand — searching and then
+			 * folding the results has to work.
+			 */
 			let forceExpanded = new Set();
+			/**
+			 * Guids present only to hold a filtered-in record's place in the tree.
+			 * Empty when no filter is on. Their rows are dimmed, so a search reads as
+			 * its matches with a path down to them rather than as an ordinary tree.
+			 */
+			let contextGuids = new Set();
 
 			let hierarchy = null;
 			/** flattened currently-visible nodes, in display order */
 			let rows = [];
 			let selectedIndex = 0;
-			let filter = '';
 			let $root = null;
 			let $list = null;
-			let $search = null;
-			let $toolbar = null;
+			let $note = null;
 			let $menu = null;
 			/** id of the side panel opened by Space-to-peek, if any */
 			let peekPanelId = null;
@@ -179,13 +222,6 @@ class Plugin extends CollectionPlugin {
 			let propMode = null;
 			/** guid of a just-created record whose name opens for editing on the next render */
 			let pendingNameEditGuid = null;
-			/**
-			 * setSortColumn() only sets the view's runtime sort — it never writes back
-			 * to sort_field_id in the config — so the current sort is tracked here,
-			 * seeded once from the config.
-			 */
-			let sortFieldId = null;
-			let sortDir = null;
 
 			// --- collection / view config -------------------------------------
 
@@ -248,42 +284,11 @@ class Plugin extends CollectionPlugin {
 				return map;
 			};
 
-			/** The panel showing this collection, so tab clicks navigate the right one. */
+			/** The panel showing this collection, so peeks open beside the right one. */
 			const ownPanel = () => ui.getPanels().find(panel => {
 				const nav = panel.getNavigation();
 				return nav && nav.type === 'overview' && nav.rootId === collectionGuid();
 			}) || null;
-
-			// Falls back to the id this closure was registered against, which IS this
-			// view — the old fallback looked for a view literally called `outline`,
-			// which was wrong the moment a collection had more than one of them.
-			const currentViewId = () => {
-				const panel = ownPanel();
-				const nav = panel ? panel.getNavigation() : null;
-				if (nav && nav.subId) return nav.subId;
-				return viewId;
-			};
-
-			const currentView = () => {
-				const id = currentViewId();
-				return (plugin.getConfiguration().views || []).find(v => v.id === id) || null;
-			};
-
-			// CollectionPlugin has no getWorkspaceGuid() (that lives on AppPlugin),
-			// so the guid comes off the panel's own current navigation.
-			const navigate = (type, subId) => {
-				const panel = ownPanel();
-				if (!panel) return;
-				const nav = panel.getNavigation();
-				panel.navigateTo({
-					type,
-					rootId: collectionGuid(),
-					subId,
-					workspaceGuid: nav ? nav.workspaceGuid : null,
-				});
-			};
-
-			const navigateToView = (viewId) => navigate('overview', viewId);
 
 			// --- data ----------------------------------------------------------
 
@@ -319,39 +324,29 @@ class Plugin extends CollectionPlugin {
 				return text ? { text } : null;
 			};
 
-			const matches = (node, fields) => {
-				if (!filter) return true;
-				const needle = filter.toLowerCase();
-				if (node.name.toLowerCase().includes(needle)) return true;
-				return fields.some(field => {
-					const value = propValue(node.record, field);
-					return value && value.text.toLowerCase().includes(needle);
-				});
-			};
-
-			/** Ancestors of every match, so a deep hit still shows the path down to it. */
-			const computeFilterState = (fields) => {
+			/**
+			 * With a filter on, every node on a path down to a filtered-in record
+			 * opens, so the matches are all on screen. `contextGuids` are the
+			 * ancestors put back by withAncestors(); an empty set means no filter is
+			 * on, and then nothing is forced and the user's own collapse state is all
+			 * that decides.
+			 */
+			const computeForceExpanded = (contextGuids) => {
 				forceExpanded = new Set();
-				if (!hierarchy || !filter) return null;
-				const keep = new Set();
-				const visit = (node, ancestors) => {
-					if (matches(node, fields)) {
-						keep.add(node.id);
-						ancestors.forEach(a => {
-							keep.add(a.id);
-							forceExpanded.add(a.id);
-						});
-					}
-					node.children.forEach(child => visit(child, [...ancestors, node]));
+				if (!hierarchy || !contextGuids.size) return;
+				const visit = (node) => {
+					const hasMatchBelow = node.children
+						.map(visit)
+						.some(Boolean);
+					if (hasMatchBelow) forceExpanded.add(node.id);
+					return hasMatchBelow || !contextGuids.has(node.id);
 				};
-				hierarchy.rootNodes.forEach(root => visit(root, []));
-				return keep;
+				hierarchy.rootNodes.forEach(visit);
 			};
 
-			const flatten = (keep) => {
+			const flatten = () => {
 				const out = [];
 				const visit = (node, depth, parent) => {
-					if (keep && !keep.has(node.id)) return;
 					out.push({ node, depth, parent });
 					if (isExpanded(node)) {
 						node.children.forEach(child => visit(child, depth + 1, node));
@@ -366,6 +361,9 @@ class Plugin extends CollectionPlugin {
 				if (!$list) return;
 				$list.querySelectorAll('.outline-row').forEach(($row, i) => {
 					$row.classList.toggle('selected', i === selectedIndex);
+					// The roving Tab stop moves with the selection, so Tab back into
+					// the view returns to the row the user left.
+					$row.tabIndex = i === selectedIndex ? 0 : -1;
 				});
 				const $selected = $list.querySelector(`.outline-row[data-index="${selectedIndex}"]`);
 				if ($selected) {
@@ -375,7 +373,11 @@ class Plugin extends CollectionPlugin {
 					// from the view root — which precedes everything inside it in
 					// document order — it walks OUT of the view to the panel's
 					// breadcrumb. From the row it reaches the search box, as native does.
-					if (document.activeElement !== $search) {
+					//
+					// Not while the caret is in the app's search box: refreshes land on
+					// every keystroke there, and stealing focus back would make the box
+					// impossible to type in.
+					if (document.activeElement !== appSearchInput()) {
 						$selected.focus({ preventScroll: true });
 					}
 				}
@@ -474,6 +476,36 @@ class Plugin extends CollectionPlugin {
 				$root.focus({ preventScroll: true });
 			};
 
+			/**
+			 * The app's own view chrome — the toolbar and the search row it now gives
+			 * a custom view. Both live in `.custom-view`, above the node this view
+			 * draws into, so they are reachable from the view root.
+			 *
+			 * Focusing them is a read of the app's markup, not a write: nothing here
+			 * creates, removes or rewrites an app node. It is still the app's DOM, so
+			 * every lookup is a fresh query that fails quietly — a renamed class costs
+			 * one key its effect, nothing more.
+			 */
+			const appChrome = () => ($root && $root.closest('.custom-view')) || null;
+
+			/** The app's collection search box, or null if the markup moved. */
+			const appSearchInput = () => {
+				const $chrome = appChrome();
+				return ($chrome && $chrome.querySelector('.records-view-query-wrap input')) || null;
+			};
+
+			/**
+			 * Hand focus up to the app's search box, which is where native sends ↑
+			 * from the first row. Its own key handling takes over from there: ↑ again
+			 * goes to the active view tab, and ↑ from the tab to the page title.
+			 */
+			const focusAppSearch = () => {
+				const $input = appSearchInput();
+				if (!$input) return false;
+				$input.focus();
+				return true;
+			};
+
 			/** The peek panel, re-resolved each time — panel objects don't outlive much. */
 			const peekPanel = () => {
 				if (!peekPanelId) return null;
@@ -529,6 +561,8 @@ class Plugin extends CollectionPlugin {
 					if (panel) ui.setActivePanel(panel);
 					return;
 				}
+				// Still required as of 1.0.18 / 2026-08-01: without this, ⌘[ after a
+				// commit walks back through every record the peek passed over.
 				if (panel) ui.closePanel(panel);
 				// closePanel() only starts a 150ms zoomOut animation and removes the
 				// panel on a timer afterwards, so it is still in the layout and still
@@ -568,6 +602,8 @@ class Plugin extends CollectionPlugin {
 					if (self) ui.setActivePanel(self);
 					focusView();
 				};
+				// Still required as of 1.0.18 / 2026-08-01: with only the synchronous
+				// grab the aside's editor keeps the keyboard.
 				takeFocusBack();
 				requestAnimationFrame(takeFocusBack);
 				setTimeout(takeFocusBack, 120);
@@ -580,10 +616,12 @@ class Plugin extends CollectionPlugin {
 				peekPanelId = opened ? opened.getId() : null;
 			};
 
-			const togglePeek = () => {
-				if (peekPanelId) hidePeek();
-				else showPeek();
-			};
+			/**
+			 * Space peeks; a SECOND Space does not dismiss. Native dropped the toggle
+			 * — Escape is the way out now — so pressing it again just re-peeks the
+			 * focused row, which is what arrowing through a peek already does.
+			 */
+			const peekSelected = () => showPeek();
 
 			/**
 			 * Row geometry, in one place: a row is [pad][twisty][gap][icon...], and
@@ -610,24 +648,7 @@ class Plugin extends CollectionPlugin {
 				setTimeout(() => { if (pendingNameEditGuid) renderRows(); }, 150);
 			};
 
-			// --- toolbar -------------------------------------------------------
-
-			const toolbarButton = (iconName, tooltip, onClick, label) => {
-				const $btn = document.createElement('button');
-				$btn.className = 'outline-tb-btn';
-				$btn.title = tooltip;
-				if (iconName) $btn.appendChild(ui.createIcon(iconName));
-				if (label) {
-					const $label = document.createElement('span');
-					$label.textContent = label;
-					$btn.appendChild($label);
-				}
-				$btn.addEventListener('click', (e) => {
-					e.stopPropagation();
-					onClick(e);
-				});
-				return $btn;
-			};
+			// --- menus -----------------------------------------------------------
 
 			/**
 			 * Dismisses the open menu on any click outside it, like the app's own
@@ -752,118 +773,18 @@ class Plugin extends CollectionPlugin {
 				}
 			};
 
-			const ensureSortState = () => {
-				if (sortFieldId !== null) return;
-				const view = currentView();
-				sortDir = (view && view.sort_dir) || 'asc';
-				sortFieldId = (view && view.sort_field_id) || '';
-				if (!sortFieldId) {
-					// An empty sort field means custom order, which this view has no
-					// way to set. Fall back to Title and actually apply it, so the
-					// toolbar never reports a sort the menu can't offer.
-					sortFieldId = 'title';
-					viewContext.setSortColumn(sortFieldId, sortDir);
-				}
-			};
-
-			const applySort = (fieldId, dir) => {
-				sortFieldId = fieldId;
-				sortDir = dir;
-				viewContext.setSortColumn(fieldId, dir);
-				renderToolbar();
-			};
-
 			/**
-			 * Which fields the app offers as sort keys, from its own predicate:
-			 * active, not the `icon` field, and not a file/image/banner type; plus
-			 * `parent_page` always excluded and `collection` excluded outside a
-			 * dynamic collection.
-			 *
-			 * The app also offers "Custom Order" (the empty field id), which sorts on
-			 * a per-view drag position stored at record.j["$o:<viewId>"]. This view
-			 * has no drag-reorder, so no record ever gets an "$o:outline" key and it
-			 * would only ever mean creation order — it is deliberately not offered.
+			 * A view whose property was deleted says so rather than passing for a
+			 * working outline that happens to be flat. Transient by design: the
+			 * installer's reconcile removes orphaned views.
 			 */
-			const SORT_SKIP_IDS = ['icon', 'parent_page', 'collection'];
-			const SORT_SKIP_TYPES = ['file', 'image', 'banner'];
-			const sortableFields = () => (plugin.getConfiguration().fields || []).filter(f =>
-				f.active !== false
-				&& !SORT_SKIP_IDS.includes(f.id)
-				&& !SORT_SKIP_TYPES.includes(f.type));
-
-			const openSortMenu = ($anchor) => {
-				const rect = $anchor.getBoundingClientRect();
-				const items = [];
-				sortableFields().forEach(field => items.push({
-					label: field.label,
-					icon: field.icon || 'ti-align-left',
-					active: field.id === sortFieldId,
-					onSelect: () => applySort(field.id, sortDir),
-				}));
-				showMenu(items, rect.left, rect.bottom + 2, 'Sort by property...');
-			};
-
-			const renderToolbar = () => {
-				if (!$toolbar) return;
-				$toolbar.innerHTML = '';
-				closeMenu();
-
-				ensureSortState();
-				const conf = plugin.getConfiguration();
-				const activeId = currentViewId();
-
-				const $views = document.createElement('div');
-				$views.className = 'outline-tb-views';
-				(conf.views || []).filter(v => v.shown !== false).forEach(v => {
-					const $tab = toolbarButton(v.icon || 'ti-table-dashed', v.label, () => {
-						if (v.id !== activeId) navigateToView(v.id);
-					}, v.label);
-					$tab.classList.add('outline-tb-tab');
-					if (v.id === activeId) $tab.classList.add('is-active');
-					$views.appendChild($tab);
-				});
-				$toolbar.appendChild($views);
-
-				const $actions = document.createElement('div');
-				$actions.className = 'outline-tb-actions';
-
-				if (viewContext.supportsCreateRecord()) {
-					const $create = toolbarButton(null, `New ${viewContext.getRecordTypeName()}`,
-						createRecord, `New ${viewContext.getRecordTypeName()}`);
-					$actions.appendChild($create);
-					const $divider = document.createElement('span');
-					$divider.className = 'outline-tb-divider';
-					$actions.appendChild($divider);
-				}
-
-				const $sortWrap = document.createElement('span');
-				$sortWrap.className = 'outline-sort-wrap';
-				const sortField = (conf.fields || []).find(f => f.id === sortFieldId);
-				const $sortBtn = toolbarButton('ti-selector', 'Change sort field', () => {
-					openSortMenu($sortWrap);
-				}, sortField ? sortField.label : 'Sort');
-				$sortWrap.appendChild($sortBtn);
-				$actions.appendChild($sortWrap);
-
-				$actions.appendChild(toolbarButton(
-					sortDir === 'asc' ? 'ti-arrow-up' : 'ti-arrow-down',
-					sortDir === 'asc' ? 'Ascending' : 'Descending',
-					() => applySort(sortFieldId, sortDir === 'asc' ? 'desc' : 'asc')
-				));
-
-				$toolbar.appendChild($actions);
-
-				// A view whose property was deleted says so rather than passing for a
-				// working outline that happens to be flat. Transient by design: the
-				// installer's reconcile removes orphaned views.
+			const renderOrphanNote = () => {
+				if (!$note) return;
 				const orphaned = hierarchyBinding().orphaned;
-				if (orphaned) {
-					const $note = document.createElement('div');
-					$note.className = 'outline-tb-note';
-					$note.textContent = 'The property this view nested by is gone, so rows are flat. '
-						+ 'Run "Outline: install into a collection..." to clean this up.';
-					$toolbar.appendChild($note);
-				}
+				$note.textContent = orphaned
+					? 'The property this view nested by is gone, so rows are flat. '
+						+ 'Run "Outline: install into a collection..." to clean this up.'
+					: '';
 			};
 
 			// --- inline editing --------------------------------------------------
@@ -1181,14 +1102,13 @@ class Plugin extends CollectionPlugin {
 			const renderRows = () => {
 				if (!$list) return;
 				const fields = visibleFields();
-				const keep = computeFilterState(fields);
 				$list.innerHTML = '';
-				rows = hierarchy ? flatten(keep) : [];
+				rows = hierarchy ? flatten() : [];
 
 				if (rows.length === 0) {
 					const $empty = document.createElement('div');
 					$empty.className = 'outline-empty';
-					$empty.textContent = filter ? 'No matches' : 'No records';
+					$empty.textContent = 'No records';
 					$list.appendChild($empty);
 					return;
 				}
@@ -1199,11 +1119,19 @@ class Plugin extends CollectionPlugin {
 
 					const $row = document.createElement('div');
 					$row.className = 'outline-row';
+					// Only ever set while a filter is on: a context row is one the
+					// filter dropped and the tree needed back.
+					if (contextGuids.has(node.id)) $row.classList.add('is-context');
 					$row.dataset.index = String(index);
-					// Focusable but not in the Tab order: Tab is handled explicitly,
-					// while unhandled keys (Shift+Tab) need a focused node here so the
+					// Roving tabindex: the selected row is the view's single stop in the
+					// browser's Tab order, every other row is focusable only by script.
+					// Tab out of the app's search box has to land ON a row for this
+					// view's own Tab handling to take over and step the list, the way
+					// the built-in List view does; with every row at -1 the browser
+					// walked straight past them to the create card and out of the view.
+					// Unhandled keys (Shift+Tab) still need the focused row here so the
 					// browser walks focus from the row, not from the view root.
-					$row.tabIndex = -1;
+					$row.tabIndex = index === selectedIndex ? 0 : -1;
 					$row.dataset.guid = node.id;
 					// restack() needs the depth indent to line the chips up under the
 					// row icon once they are out of the title line.
@@ -1293,7 +1221,7 @@ class Plugin extends CollectionPlugin {
 				restack();
 				setSelection(selectedIndex);
 
-				// A record created from the toolbar, the create card or Shift+Enter
+				// A record created from the create card or Shift+Enter
 				// shows up here on the refresh that followed; open its name.
 				if (pendingNameEditGuid) {
 					const at = rows.findIndex(r => r.node.id === pendingNameEditGuid);
@@ -1316,54 +1244,9 @@ class Plugin extends CollectionPlugin {
 				// sized from; it only sets width:100%/position:relative itself.
 				$root.className = 'outline-root collection-list-view';
 
-				$toolbar = document.createElement('div');
-				$toolbar.className = 'outline-toolbar';
-				$root.appendChild($toolbar);
-
-				const $searchRow = document.createElement('div');
-				$searchRow.className = 'outline-search-row';
-				const $searchIcon = ui.createIcon('ti-search');
-				$searchIcon.classList.add('outline-search-icon');
-				$searchRow.appendChild($searchIcon);
-
-				$search = document.createElement('input');
-				$search.type = 'text';
-				$search.className = 'outline-search-input';
-				$search.placeholder = `Search in ${plugin.getConfiguration().name}`;
-				$search.addEventListener('input', () => {
-					filter = $search.value.trim();
-					selectedIndex = 0;
-					renderRows();
-				});
-				// Arrow keys must still drive the list while the caret is in the box.
-				$search.addEventListener('keydown', (e) => {
-					if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
-						// Native hands focus from the search box to the FIRST row
-						// (focusFromCollectionSearch), and the box gives up focus. Tab
-						// does the same: the search box is the last stop in the
-						// toolbar-then-search-then-rows order, so Tab enters the list.
-						e.preventDefault();
-						$search.blur();
-						focusView();
-						setSelection(0);
-					} else if (e.key === 'ArrowUp') {
-						// Up out of the search box goes to the ACTIVE view tab (and from
-						// there the app's title, which this view can't focus).
-						e.preventDefault();
-						const $active = $toolbar && $toolbar.querySelector('.outline-tb-tab.is-active');
-						if ($active) $active.focus();
-					} else if (e.key === 'Enter') {
-						e.preventDefault();
-						openSelected(e.metaKey || e.ctrlKey);
-					} else if (e.key === 'Escape') {
-						e.preventDefault();
-						$search.value = '';
-						filter = '';
-						renderRows();
-					}
-				});
-				$searchRow.appendChild($search);
-				$root.appendChild($searchRow);
+				$note = document.createElement('div');
+				$note.className = 'outline-note';
+				$root.appendChild($note);
 
 				$list = document.createElement('div');
 				$list.className = 'outline-list';
@@ -1404,69 +1287,12 @@ class Plugin extends CollectionPlugin {
 							font-size: var(--text-size-normal);
 							color: var(--text-default);
 						}
-						.outline-toolbar {
-							display: flex;
-							align-items: center;
-							gap: 8px;
-							min-height: 34px;
-							/* So the orphan note can take a line of its own. With
-							   nothing but the tabs and the actions there is nothing
-							   to wrap, so this changes no existing layout. */
-							flex-wrap: wrap;
-						}
-						.outline-tb-note {
-							flex: 0 0 100%;
+						.outline-note {
 							font-size: 12px;
 							color: var(--enum-orange-fg, #c60);
 						}
-						.outline-tb-views {
-							display: flex;
-							align-items: center;
-							gap: 3px;
-							flex: 1 1 auto;
-							min-width: 0;
-							overflow: hidden;
-						}
-						.outline-tb-actions {
-							display: flex;
-							align-items: center;
-							gap: 2px;
-							flex: 0 0 auto;
-							margin-left: auto;
-						}
-						.outline-tb-btn {
-							display: inline-flex;
-							align-items: center;
-							gap: 5px;
-							flex: 0 0 auto;
-							max-width: 240px;
-							padding: 4px 8px;
-							background: transparent;
-							border: 1px solid transparent;
-							border-radius: var(--radius-normal);
-							color: var(--text-muted);
-							font-family: var(--font-sans);
-							font-size: var(--text-size-small);
-							white-space: nowrap;
-							cursor: pointer;
-						}
-						.outline-tb-btn:hover {
-							background: var(--button-minimal-bg-color);
-							color: var(--button-minimal-fg-color);
-						}
-						.outline-tb-btn.is-active {
-							background: var(--button-minimal-bg-active-color);
-							color: var(--text-default);
-						}
-						.outline-tb-divider {
-							width: 1px;
-							height: 18px;
-							margin: 0 3px 0 0;
-							background: var(--divider-color);
-						}
-						.outline-sort-wrap {
-							position: relative;
-							display: inline-flex;
+						.outline-note:empty {
+							display: none;
 						}
 						.outline-menu {
 							position: absolute;
@@ -1511,40 +1337,6 @@ class Plugin extends CollectionPlugin {
 						.outline-menu-item.is-selected:hover {
 							background: var(--cmdpal-selected-bg-color);
 							color: var(--cmdpal-selected-fg-color);
-						}
-						.outline-search-row {
-							position: relative;
-							display: flex;
-							align-items: center;
-							width: 100%;
-							margin-top: 8px;
-							margin-bottom: 8px;
-						}
-						.outline-search-icon {
-							position: absolute;
-							left: 12px;
-							top: 50%;
-							z-index: 3;
-							transform: translateY(-50%);
-							color: var(--text-muted);
-							font-size: 17px;
-							pointer-events: none;
-						}
-						.outline-search-input {
-							width: 100%;
-							min-height: 36px;
-							padding: 7px 36px 7px 34px;
-							border: var(--input-border);
-							border-radius: var(--radius-normal);
-							background: color-mix(in srgb, var(--panel-bg-color) 80%, var(--color-bg-500));
-							color: var(--text-default);
-							font-family: var(--font-sans);
-							font-size: var(--text-size-normal);
-						}
-						.outline-search-input:focus {
-							border: var(--input-border-focus);
-							outline: none;
-							box-shadow: var(--input-border-shadow);
 						}
 						.outline-list {
 							display: flex;
@@ -1595,6 +1387,33 @@ class Plugin extends CollectionPlugin {
 							white-space: nowrap;
 							overflow: hidden;
 							text-overflow: ellipsis;
+						}
+						/*
+						 * A row the filter dropped, kept only to hold a match's place.
+						 * Dimmed rather than hidden: it still has to read as the path
+						 * down to the match, and it is still a working row — clickable,
+						 * foldable, editable. The matches themselves are left alone, so
+						 * an unfiltered tree looks exactly as it always did.
+						 *
+						 * Recoloring the name alone was not enough to see, at either
+						 * --text-subtle (text-500, one step off the default — invisible)
+						 * or --text-muted (text-800). Fading the WHOLE row instead takes
+						 * the name, the icon, the chips and the timestamp down together,
+						 * which is what makes the matched rows pop out of the column; the
+						 * name also loses its bold, so weight carries the same signal
+						 * where a theme's colors are close together.
+						 */
+						.outline-row.is-context {
+							opacity: .45;
+						}
+						.outline-row.is-context .outline-name {
+							font-weight: 400;
+						}
+						/* Full strength again on hover or focus — a faded row is still a
+						   working row, and it should not look inert while pointed at. */
+						.outline-row.is-context:hover,
+						.outline-row.is-context.selected {
+							opacity: 1;
 						}
 						.outline-count {
 							flex: 0 0 auto;
@@ -1752,9 +1571,15 @@ class Plugin extends CollectionPlugin {
 				},
 
 				onRefresh: ({ records }) => {
-					hierarchy = buildHierarchy(records, hierarchyFieldId());
+					const parentFieldId = hierarchyFieldId();
+					// The app hands over the matches alone once its search or a filter
+					// is on; the tree needs the path down to each of them back.
+					const completed = withAncestors(records, parentFieldId);
+					hierarchy = buildHierarchy(completed.records, parentFieldId);
+					contextGuids = completed.added;
+					computeForceExpanded(contextGuids);
 					if (!$list) mount();
-					renderToolbar();
+					renderOrphanNote();
 					renderRows();
 				},
 
@@ -1769,8 +1594,7 @@ class Plugin extends CollectionPlugin {
 					rows = [];
 					$root = null;
 					$list = null;
-					$search = null;
-					$toolbar = null;
+					$note = null;
 					$menu = null;
 				},
 
@@ -1782,56 +1606,17 @@ class Plugin extends CollectionPlugin {
 					if ($menu) return;
 
 					// The hook still fires while something OUTSIDE this view holds
-					// focus — the panel's breadcrumb button, for one. Treating those
-					// keys as row navigation made Tab jump into the rows from up
-					// there, and Shift+Tab land in the search box. Only act when the
-					// focused element is ours, or when nothing in particular has focus
-					// (document.body), which is the state the view sits in normally.
+					// focus — the panel's breadcrumb button and the panel's own search
+					// box, for two. Treating those keys as row navigation made Tab jump
+					// into the rows from up there. Only act when the focused element is
+					// ours, or when nothing in particular has focus (document.body),
+					// which is the state the view sits in normally.
 					const $focused = document.activeElement;
 					if ($focused && $focused !== document.body
 						&& $root && !$root.contains($focused)) return;
-					// The search box handles its own keys via its keydown listener,
-					// and so does an open inline editor.
-					if ($search && document.activeElement === $search) return;
+					// An open inline editor handles its own keys.
 					if ($focused && $focused.classList
 						&& $focused.classList.contains('outline-inline-input')) return;
-
-					// While a toolbar button holds focus, the arrows belong to the
-					// toolbar, not the rows. The chain going down is
-					// title -> active view tab -> search -> rows; going up reverses it,
-					// and above the tabs it is the app's title, out of reach here.
-					if ($toolbar && $toolbar.contains(document.activeElement)) {
-						if (e.key === 'ArrowDown' && $search) {
-							e.preventDefault();
-							$search.focus();
-							return;
-						}
-						// Left/Right cycle along the toolbar. They must be swallowed:
-						// unhandled, the app reads them as move-panel-left/right.
-						if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-							e.preventDefault();
-							const $buttons = Array.from($toolbar.querySelectorAll('button'));
-							const at = $buttons.indexOf(document.activeElement);
-							if (at !== -1 && $buttons.length) {
-								const step = e.key === 'ArrowRight' ? 1 : -1;
-								$buttons[(at + step + $buttons.length) % $buttons.length].focus();
-							}
-							return;
-						}
-						// Tab is driven by hand rather than left to the browser: the
-						// default never arrives here (Shift+Tab's does), so relying on
-						// it dropped straight into the rows.
-						if (e.key === 'Tab' && !e.shiftKey) {
-							e.preventDefault();
-							const $buttons = Array.from($toolbar.querySelectorAll('button'));
-							const at = $buttons.indexOf(document.activeElement);
-							const $next = at === -1 ? null : $buttons[at + 1];
-							if ($next) $next.focus();
-							else if ($search) $search.focus();
-							return;
-						}
-						return;
-					}
 
 					if (rows.length === 0) return;
 					const current = rows[selectedIndex];
@@ -1881,10 +1666,12 @@ class Plugin extends CollectionPlugin {
 						return;
 					}
 
-					// "/" jumps to the search box, as it does in the native views.
+					// "/" focuses the collection search box, as it does in the native
+					// views. The app binds this key inside its CARD views
+					// (`onKeyboardNavigation` → `focusCollectionSearch()`), not app-wide,
+					// so a custom view is handed nothing and has to do it itself.
 					if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-						e.preventDefault();
-						if ($search) $search.focus();
+						if (focusAppSearch()) e.preventDefault();
 						return;
 					}
 
@@ -1906,7 +1693,7 @@ class Plugin extends CollectionPlugin {
 					}
 					if (e.key === ' ') {
 						e.preventDefault();
-						togglePeek();
+						peekSelected();
 						return;
 					}
 
@@ -1948,9 +1735,12 @@ class Plugin extends CollectionPlugin {
 							break;
 						case 'ArrowUp':
 							e.preventDefault();
-							// From the first row the native views hand focus back to
-							// the search box rather than wrapping.
-							if (selectedIndex === 0 && $search) $search.focus();
+							// ↑ does NOT wrap, unlike ↓: from the first row native hands
+							// focus up to the search box, then the view tabs, then the
+							// title. Only the first step is ours to make — the app's own
+							// toolbar handler covers the rest. With no search box to be
+							// found, the selection simply stays put.
+							if (selectedIndex === 0) focusAppSearch();
 							else selectNext(-1);
 							break;
 						// ←/→ cycle rows like ↑/↓ do. They also have to be swallowed:
