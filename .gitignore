@@ -1,0 +1,17 @@
+# --- linked into the shared cache, NOT committed (run ./setup.sh to materialize) ---
+/sdk
+/bin/thymercli
+/examples
+
+# deps / build output
+node_modules/
+dist/
+
+# browser-automation output / OS
+.playwright-mcp/
+.DS_Store
+
+# ...except the installer's built bundle: it embeds the view source, so
+# dist/plugin.js is the only pasteable form of that plugin.
+!installer/dist/
+!installer/dist/plugin.js

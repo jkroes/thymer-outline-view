@@ -27,7 +27,7 @@ not do.
 
 `plugin.js` is the view. It declares a bare `class Plugin`, no `export`, so the
 file is paste-ready for the in-app Custom Code editor with no edit step. That
-also means `plugins/build.sh` can't bundle it — that script's
+also means `./build.sh .` can't bundle it — that script's
 `--format=iife --global-name=plugins` needs an export. Nothing here uses it;
 deploy is the `thymercli` path below.
 
@@ -163,12 +163,12 @@ workspace's guid.
 
 ```bash
 bin/thymercli plugin update code <Collection> \
-  -w <workspace-guid> < plugins/outline-view/plugin.js
+  -w <workspace-guid> < plugin.js
 
 # the installer is a global plugin; address it by guid
-node plugins/outline-view/installer/build.mjs
+node installer/build.mjs
 bin/thymercli plugin update code <installer-plugin-guid> \
-  -w <workspace-guid> < plugins/outline-view/installer/dist/plugin.js
+  -w <workspace-guid> < installer/dist/plugin.js
 ```
 
 Create the installer's plugin record first if it doesn't exist — MCP
@@ -822,3 +822,23 @@ installs are still recognised and removable.
   to hold a cycle and so is a sub-page link written before this view existed.
 - Sibling order is whatever the app hands over, so the view's sort actually
   applies. Don't re-sort inside `buildHierarchy()`.
+
+## Repo setup and publishing
+
+`sdk/`, `bin/thymercli` and `examples/` are **symlinks into the shared cache** owned by
+the `thymer-plugin-init` skill, and are gitignored — run `./setup.sh` after a fresh
+clone. Don't edit `sdk/`; it's a vendored upstream snapshot shared with every other
+plugin repo.
+
+`installer/dist/plugin.js` **is committed on purpose** (`.gitignore` un-ignores it): it
+embeds the view source, so it's the only pasteable form of the installer. Rebuild it with
+`node installer/build.mjs` after ANY change to `plugin.js`.
+
+There is deliberately **no `plugin.json`** — a collection config is workspace schema, not
+plugin source.
+
+`origin` is jkroes/thymer-outline-view (public, MIT). The remote was force-reset to a
+clean one-commit split back when this lived in `thymer-playground`, so **it shares no
+ancestry with this repo's history** — a plain `git push` will be rejected. Republish by
+squashing and force-pushing; the real history is the one here, and it reaches back through
+the `organizations-outline` name.
