@@ -230,6 +230,17 @@ before you write and don't push a config from a different collection.
 - **New \<item\> leaves the row in place** with its name in edit mode, rather
   than navigating to the new page. Leaving it unnamed discards the record, as
   native does with an untouched new card.
+
+  The create card at the BOTTOM of the outline is this plugin's, not the app's —
+  the app's toolbar supplies its own New button, but no bottom card. The two do
+  not behave alike: reported by the user 2026-08-02, the toolbar button commits
+  the new page with no way back, while this card's Escape (or an empty commit)
+  backs out. "Backs out" means create-then-trash, not never-created:
+  `createRecord()` calls `viewContext.createRecord()` immediately and
+  `startNameEdit(node, true)` calls `node.record.trash()` when the name comes
+  back empty, so an abandoned card still leaves a trashed record behind. The
+  toolbar comparison is the user's observation, unverified here — checking it
+  means creating a page, which `~/repos/thymer/CLAUDE.md` forbids doing casually.
 - **Collapse/expand is ⌘↑/⌘↓**, not ←/→ — those cycle rows, matching the way
   the arrows behave everywhere else in the panel.
 - **Keys and mouse follow the native list view**, read out of the bundle rather
