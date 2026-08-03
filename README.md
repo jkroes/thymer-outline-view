@@ -74,37 +74,28 @@ yours to change freely.
 
 ### Either way
 
-The tree is drawn from a record-link property pointing back at the same
-collection — "Sub-page of", or one you made yourself.
+The tree comes from a record-link property pointing back at the same collection
+— "Sub-page of", or one you made. A property qualifies only if it holds **one**
+link: several links would give a record several parents, which is not a tree.
+One pointing at another collection groups records rather than nesting them.
 
-**A collection can have several of these, and each is its own hierarchy.** The
-installer gives you one Outline view per property, so you can keep, say, a
-sub-page tree and a "Reports to" tree side by side and switch between them with
-the view tabs. Each view remembers which property it draws, and keeps its own
-name, columns, sort and collapsed rows.
+**Each such property is its own hierarchy**, and Install gives you one view per
+property — a sub-page tree and a "Reports to" tree side by side, switched with
+the view tabs. Every view keeps its own name, columns, sort and collapsed rows,
+and remembers which property it draws. A Custom view you add by hand has no
+property assigned, so it uses "Sub-page of", or the first that qualifies.
 
-The sub-page view is named **Outline**; every other one is named after its
-property, as **Outline: Reports to**. Rename a property and Install brings that
-name up to date — unless you renamed the view yourself, in which case your name
-is kept. Either way the view goes on drawing the right tree.
+The sub-page view is called **Outline**, every other one **Outline: `<property>`**.
+Rename a property and Install updates that name, unless you named the view
+yourself.
 
-Only properties that hold a **single** link and point back at the **same**
-collection can be nested by. A property that holds several links would give a
-record more than one parent, which is no longer a tree; one pointing at a
-different collection points at records this view never sees.
+**The property is what a view is made from.** Install re-creates a view you
+deleted, because the property is still there; delete the property to be rid of
+the view. Until you re-run it, an orphaned view lists everything flat and says
+so above the rows.
 
-A view added by hand, with no property assigned, falls back to "Sub-page of", or
-to the first eligible property if the collection has no sub-pages.
-
-**The property is what a view is made from.** Running Install again re-creates a
-view you deleted, because the property is still there. To get rid of a view for
-good, delete its property — the next Install clears the view away. Until you run
-it, a view whose property is gone lists everything flat and says so in a line
-above the rows.
-
-Turning sub-pages back off removes the "Sub-page of" property, so its view loses
-that hierarchy. The links survive: turn sub-pages on again and every parent
-comes back exactly as it was.
+Turning sub-pages off removes "Sub-page of", so that view loses its hierarchy.
+The links survive — turn sub-pages back on and every parent returns.
 
 ## Keys
 
@@ -139,8 +130,8 @@ Some parts of Thymer's plugin API that aren't open yet, so custom views can't mi
   writable from a plugin, so "Custom Order" isn't offered as a sort either.
 - No `Alt+Enter` (create above) — there's no positioned-create call.
 - No trash shortcut.
-- Committing a peek makes the side panel blink. Closing and reopening the panel
-  is the only way to keep the back-button history tidy.
+- Committing a peek makes the side panel blink because the plugin has to close
+  and reopen the side panel to keep the back-button history tidy.
 - The status bar shows Thymer's default shortcuts, not this view's — a custom
   view can add status bar items but can't replace the set.
 - Sort resets when the view is rebuilt. Thymer's native views do the same;
