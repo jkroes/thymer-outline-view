@@ -848,8 +848,11 @@ embeds the view source, so it's the only pasteable form of the installer. Rebuil
 There is deliberately **no `plugin.json`** — a collection config is workspace schema, not
 plugin source.
 
-`origin` is jkroes/thymer-outline-view (public, MIT). The remote was force-reset to a
-clean one-commit split back when this lived in `thymer-playground`, so **it shares no
-ancestry with this repo's history** — a plain `git push` will be rejected. Republish by
-squashing and force-pushing; the real history is the one here, and it reaches back through
-the `organizations-outline` name.
+`origin` is jkroes/thymer-outline-view (public, MIT), and **a plain `git push origin main`
+works from here on.**
+
+It was force-pushed once, on 2026-08-02, when this split out of `thymer-playground`. The
+history had been orphaned by the 2026-07-30 rename from `organizations-outline`, so the
+18 pre-rename commits were re-attached by reparenting the chain — which gave every commit
+after them a new SHA and required one forced update to publish. That's done; nothing about
+this repo needs force-pushing again.
