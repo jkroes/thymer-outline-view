@@ -25,17 +25,17 @@ not do.
 
 ## Files
 
-`plugin.js` is the view. It declares a bare `class Plugin`, no `export`, so the
-file is paste-ready for the in-app Custom Code editor with no edit step. That
-also means `./build.sh .` can't bundle it — that script's
-`--format=iife --global-name=plugins` needs an export. Nothing here uses it;
-deploy is the `thymercli` path below.
+`plugin.js` is the view — module-style source (`export class Plugin`), the
+shared convention across every plugin repo here. It is NOT paste-ready;
+`./build.sh .` bundles it to `dist/plugin.js`, the pasteable IIFE, which is
+committed so the GitHub repo always carries an installable form.
 
 `installer/` is a separate GLOBAL plugin (`AppPlugin`) that installs the view
 into any collection. `installer/plugin.js` is a template with a
 `__VIEW_SOURCE__` placeholder and will not run as-is; `node installer/build.mjs`
-injects the view source and writes `installer/dist/plugin.js`, which is the
-pasteable artifact and is committed. The source is injected as a JSON string
+injects the view's built bundle (`dist/plugin.js` — build it first) and writes
+`installer/dist/plugin.js`, which is the
+pasteable artifact and is committed. The code is injected as a JSON string
 literal — the view is full of template literals and backticks, and
 `JSON.stringify` produces a valid JS string expression, so there is no escaping
 to get wrong. Embedded rather than fetched at runtime, so installing pulls
@@ -162,8 +162,9 @@ buttons are both computed from state the writes have just changed.
 workspace's guid.
 
 ```bash
+./build.sh .
 bin/thymercli plugin update code <Collection> \
-  -w <workspace-guid> < plugin.js
+  -w <workspace-guid> < dist/plugin.js
 
 # the installer is a global plugin; address it by guid
 node installer/build.mjs
@@ -841,9 +842,10 @@ the `thymer-plugin-init` skill, and are gitignored — run `./setup.sh` after a 
 clone. Don't edit `sdk/`; it's a vendored upstream snapshot shared with every other
 plugin repo.
 
-`installer/dist/plugin.js` **is committed on purpose** (`.gitignore` un-ignores it): it
-embeds the view source, so it's the only pasteable form of the installer. Rebuild it with
-`node installer/build.mjs` after ANY change to `plugin.js`.
+`dist/plugin.js` and `installer/dist/plugin.js` **are committed on purpose**
+(`.gitignore` un-ignores them): they are the only pasteable forms of the view and the
+installer. After ANY change to `plugin.js`, rebuild BOTH:
+`./build.sh . && node installer/build.mjs`.
 
 There is deliberately **no `plugin.json`** — a collection config is workspace schema, not
 plugin source.

@@ -1,3 +1,4 @@
+/// <reference path="./sdk/types.d.ts" />
 /**
  * "Outline" — a native-list-style custom view for a self-referencing collection.
  * Rows are indented by depth from the collection's sub-page link ("Sub-page of"
@@ -148,7 +149,7 @@ function hierarchyCandidates(fields, collectionGuid) {
 		&& (field.id === 'parent_page' || field.filter_colguid === collectionGuid));
 }
 
-class Plugin extends CollectionPlugin {
+export class Plugin extends CollectionPlugin {
 
 	onLoad() {
 		this.registerOutlineView();
