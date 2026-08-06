@@ -104,6 +104,7 @@ The links survive — turn sub-pages back on and every parent returns.
 | `↑` `↓` | Move between rows. `↓` wraps at the last row; `↑` stops at the first and hands focus up to the search box, then the view tabs, then the page title. |
 | `←` `→` | Cycle through rows. |
 | `⌘↑` `⌘↓` | Collapse or expand the focused node. When there is nothing to open, `⌘↓` moves to the next row. When there is nothing to close, `⌘↑` climbs to the parent, or moves to the previous row if the node is already a root. |
+| `⌘/` | Collapse or expand the whole tree: collapses everything if anything is open, expands everything otherwise. |
 | `Tab` | Move to the next row, wrapping at the end. Tab out of the search box lands on the row you left. `Shift+Tab` is left to the browser, as it is in Thymer's own list view. |
 | `Home` `End` | Go to the first or last row. |
 | `Enter` | Open the focused record in this panel. |

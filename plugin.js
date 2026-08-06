@@ -404,6 +404,30 @@ export class Plugin extends CollectionPlugin {
 				setSelection(restored === -1 ? 0 : restored);
 			};
 
+			/** Fold or unfold the whole tree: collapse all if anything is open. */
+			const toggleAll = () => {
+				const expandable = [];
+				const visit = (node) => {
+					if (node.children.length) expandable.push(node);
+					node.children.forEach(visit);
+				};
+				hierarchy.rootNodes.forEach(visit);
+				if (!expandable.length) return;
+				if (expandable.some(isExpanded)) {
+					expandable.forEach(node => {
+						collapsed.add(node.id);
+						forceExpanded.delete(node.id);
+					});
+				} else {
+					expandable.forEach(node => collapsed.delete(node.id));
+				}
+				localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+				const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
+				renderRows();
+				const restored = rows.findIndex(r => r.node.id === keepGuid);
+				setSelection(restored === -1 ? 0 : restored);
+			};
+
 			/**
 			 * Rows are laid out single-line; any whose name had to ellipsise to make
 			 * room for its chips is stacked onto two lines instead. Always resets to
@@ -1695,6 +1719,16 @@ export class Plugin extends CollectionPlugin {
 					if (e.key === ' ') {
 						e.preventDefault();
 						peekSelected();
+						return;
+					}
+
+					// ⌘/ folds or unfolds the WHOLE tree: collapse everything if
+					// anything is open, expand everything otherwise. (Plain "/"
+					// focuses search, above.)
+					if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
+						&& (e.code === 'Slash' || e.key === '/')) {
+						e.preventDefault();
+						toggleAll();
 						return;
 					}
 
