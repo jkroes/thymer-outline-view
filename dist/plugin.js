@@ -277,6 +277,28 @@ var plugins = (() => {
           const restored = rows.findIndex((r) => r.node.id === keepGuid);
           setSelection(restored === -1 ? 0 : restored);
         }, "toggle");
+        const toggleAll = /* @__PURE__ */ __name(() => {
+          const expandable = [];
+          const visit = /* @__PURE__ */ __name((node) => {
+            if (node.children.length) expandable.push(node);
+            node.children.forEach(visit);
+          }, "visit");
+          hierarchy.rootNodes.forEach(visit);
+          if (!expandable.length) return;
+          if (expandable.some(isExpanded)) {
+            expandable.forEach((node) => {
+              collapsed.add(node.id);
+              forceExpanded.delete(node.id);
+            });
+          } else {
+            expandable.forEach((node) => collapsed.delete(node.id));
+          }
+          localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+          const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
+          renderRows();
+          const restored = rows.findIndex((r) => r.node.id === keepGuid);
+          setSelection(restored === -1 ? 0 : restored);
+        }, "toggleAll");
         const restack = /* @__PURE__ */ __name(() => {
           if (!$list) return;
           const $rows = Array.from($list.querySelectorAll(".outline-row"));
@@ -1269,6 +1291,11 @@ var plugins = (() => {
             if (e.key === " ") {
               e.preventDefault();
               peekSelected();
+              return;
+            }
+            if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === "Slash" || e.key === "/")) {
+              e.preventDefault();
+              toggleAll();
               return;
             }
             if ((e.metaKey || e.ctrlKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {

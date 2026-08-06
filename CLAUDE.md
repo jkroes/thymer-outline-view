@@ -243,7 +243,8 @@ before you write and don't push a config from a different collection.
   toolbar comparison is the user's observation, unverified here — checking it
   means creating a page, which `~/repos/thymer/CLAUDE.md` forbids doing casually.
 - **Collapse/expand is ⌘↑/⌘↓**, not ←/→ — those cycle rows, matching the way
-  the arrows behave everywhere else in the panel.
+  the arrows behave everywhere else in the panel. ⌘/ folds or unfolds the
+  whole tree at once (collapse all if anything is open, else expand all).
 - **Keys and mouse follow the native list view**, read out of the bundle rather
   than guessed — see the table below for what matches and what can't.
 
@@ -263,6 +264,7 @@ falls through untouched.
 | Shift+Tab | **no defined behavior.** `Wi(e)` normalizes it to `"Shift+Tab"`, which matches no case in the cards switch, so it falls through with no `preventDefault` and the browser's focus order decides — starting from the card, its title, or a property row, whichever holds focus. Lands on the toolbar or the search box seemingly at random | same: left unhandled on purpose. Reaching the *same* elements needed the selected row to hold real DOM focus — see below |
 | ← / → | move by one grid column — a no-op in a 1-column list, so the app reads them as move-panel-left/right | cycle rows, ← up and → down, both wrapping. Swallowed, or the panel shifts |
 | ⌘/Ctrl + ↑ / ↓ | — | collapse / expand. ⌘↓ opens a collapsed node, ⌘↑ closes an open one or climbs to the parent; with nothing to open or close, both fall back to plain ↑/↓ so the key is never dead on a leaf |
+| ⌘/Ctrl + / | — | whole-tree toggle: collapse everything if anything is open, else expand everything. Matched on `e.code === 'Slash'` too; plain `/` (focus search) is unaffected |
 | Home / End | first / last card | same |
 | Enter | open focused record in this panel; during a peek, *commit* the preview | same |
 | ⌘/Ctrl+Enter | open aside (other panel); during a peek, commit | same |
