@@ -1405,6 +1405,15 @@ export class Plugin extends CollectionPlugin {
 							color: var(--text-muted);
 							flex: 0 0 auto;
 						}
+						/*
+						 * Our collection-icons fork broadcasts its "Hide icons in
+						 * collection views" switch as this body attribute; honor it so
+						 * the Outline view matches the built-in List view. Inert when
+						 * that plugin is absent — the attribute is never set.
+						 */
+						body[data-plg-collection-icons-listview-icons="hide"] .outline-icon {
+							display: none;
+						}
 						.outline-name {
 							flex: 0 1 auto;
 							min-width: 0;
