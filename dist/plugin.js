@@ -156,6 +156,7 @@ var plugins = (() => {
         }
         let forceExpanded = /* @__PURE__ */ new Set();
         let contextGuids = /* @__PURE__ */ new Set();
+        let viewFocused = false;
         let hierarchy = null;
         let rows = [];
         let selectedIndex = 0;
@@ -255,7 +256,7 @@ var plugins = (() => {
           const $selected = $list.querySelector(`.outline-row[data-index="${selectedIndex}"]`);
           if ($selected) {
             $selected.scrollIntoView({ block: "nearest" });
-            if (document.activeElement !== appSearchInput()) {
+            if ((viewFocused || $root.contains(document.activeElement)) && document.activeElement !== appSearchInput()) {
               $selected.focus({ preventScroll: true });
             }
           }
@@ -1236,9 +1237,14 @@ var plugins = (() => {
             $note = null;
             $menu = null;
           }, "onDestroy"),
+          // Enter from the sidebar, a click, or a panel switch lands here; the
+          // selected row takes DOM focus then rather than on render.
           onFocus: /* @__PURE__ */ __name(() => {
+            viewFocused = true;
+            if (rows.length) setSelection(selectedIndex);
           }, "onFocus"),
           onBlur: /* @__PURE__ */ __name(() => {
+            viewFocused = false;
           }, "onBlur"),
           onKeyboardNavigation: /* @__PURE__ */ __name(({ e }) => {
             if ($menu) return;

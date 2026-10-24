@@ -204,6 +204,13 @@ export class Plugin extends CollectionPlugin {
 			 */
 			let contextGuids = new Set();
 
+			/**
+			 * Whether the app considers this view the focused component, as told
+			 * by onFocus/onBlur. The app's focus is its own, not DOM focus: with
+			 * the sidebar focused (⌘0), activeElement is still document.body.
+			 */
+			let viewFocused = false;
+
 			let hierarchy = null;
 			/** flattened currently-visible nodes, in display order */
 			let rows = [];
@@ -378,7 +385,13 @@ export class Plugin extends CollectionPlugin {
 					// Not while the caret is in the app's search box: refreshes land on
 					// every keystroke there, and stealing focus back would make the box
 					// impossible to type in.
-					if (document.activeElement !== appSearchInput()) {
+					//
+					// And only while the app has given this view focus. Arrowing
+					// through the sidebar previews each collection in the panel; grabbing
+					// DOM focus on that first render handed the keyboard to the rows,
+					// so the next arrow walked the outline instead of the sidebar.
+					if ((viewFocused || $root.contains(document.activeElement))
+						&& document.activeElement !== appSearchInput()) {
 						$selected.focus({ preventScroll: true });
 					}
 				}
@@ -1632,8 +1645,13 @@ export class Plugin extends CollectionPlugin {
 					$menu = null;
 				},
 
-				onFocus: () => {},
-				onBlur: () => {},
+				// Enter from the sidebar, a click, or a panel switch lands here; the
+				// selected row takes DOM focus then rather than on render.
+				onFocus: () => {
+					viewFocused = true;
+					if (rows.length) setSelection(selectedIndex);
+				},
+				onBlur: () => { viewFocused = false; },
 
 				onKeyboardNavigation: ({ e }) => {
 					// An open menu owns the keyboard; its own keydown drives it.
