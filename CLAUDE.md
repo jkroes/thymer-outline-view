@@ -301,6 +301,18 @@ parked on the view root those walked *out* of the view: the root precedes
 everything inside it in document order, so Shift+Tab jumped to the panel
 breadcrumb rather than to the row above.
 
+**Rows take DOM focus only while the app has given the view focus.** The app
+tracks a focused *component* of its own, separate from DOM focus — with the
+sidebar focused (⌘0) `activeElement` is `document.body` — and tells a custom
+view through `onFocus`/`onBlur` (`onFocusComponent`/`onBlurComponent` in the
+bundle). Arrowing through the sidebar renders each collection it passes in the
+panel; when `setSelection()` focused a row on every render, that first render
+took the keyboard from the sidebar. Now `setSelection()` focuses only when
+`viewFocused` (or DOM focus is already inside the view), and `onFocus` focuses
+the selected row, which is how Enter from the sidebar lands on the rows.
+Verified live 2026-10-24. A mouse click on a sidebar item leaves the app's
+focus in the sidebar, the same as for native views.
+
 **Keys aimed at something else must be let through.** The hook fires even while
 a node outside the view holds focus — the panel's breadcrumb button being the
 one you'll hit. Treating those as row navigation made Tab jump into the rows
