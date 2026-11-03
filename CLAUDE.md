@@ -787,6 +787,14 @@ installs are still recognised and removable.
 
 ## Gotchas in this code
 
+- **`setSelection()` re-peeks only when the selected record changed.** It also
+  runs on every render and on `onFocus`, and `setActivePanel()` fires `onFocus`
+  synchronously (`selectPanel` → `ke` → `onFocusComponent`). `showPeek()` takes
+  focus back three times, so re-peeking unconditionally looped `onFocus` →
+  `showPeek`, each pass queueing two more grabs. Added by accident in `3e7e8df`,
+  which gave `onFocus` the `setSelection()` call: one Space made 1,509 panel focus
+  flips in 500ms, then the app froze (reproduced 2026-11-02). `peekedGuid` is
+  the guard; re-peeking from `setSelection()` without it brings the freeze back.
 - **The app's view chrome is reachable, and three keys need it.** The toolbar and
   search row live in `.custom-view`, the node wrapping the one this view draws
   into, so `$root.closest('.custom-view')` reaches them:
