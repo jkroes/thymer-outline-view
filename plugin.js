@@ -226,6 +226,8 @@ export class Plugin extends CollectionPlugin {
 			 * or null when this view opened the panel itself. Dismissing restores it.
 			 */
 			let peekRestoreNav = null;
+			/** guid of the record the peek panel was last pointed at */
+			let peekedGuid = null;
 			/** E-mode: {guid, index} — the row whose property list is open, and the highlighted field */
 			let propMode = null;
 			/** guid of a just-created record whose name opens for editing on the next render */
@@ -397,9 +399,14 @@ export class Plugin extends CollectionPlugin {
 				}
 				// Native peek follows the focused card as you keep browsing — but only
 				// while the peek panel is still open. The user may have closed it.
+				//
+				// Only when the selected record actually changed. setSelection() also
+				// runs on every render and on onFocus, and showPeek() itself takes focus
+				// back three times — re-peeking from here looped onFocus → showPeek
+				// without end, each pass queueing two more timed grabs, and froze the app.
 				if (peekPanelId) {
-					if (peekPanel()) showPeek();
-					else peekPanelId = null;
+					if (!peekPanel()) peekPanelId = null;
+					else if (rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) showPeek();
 				}
 			};
 
@@ -627,6 +634,7 @@ export class Plugin extends CollectionPlugin {
 						&& (!self || p.getId() !== self.getId()));
 					peekRestoreNav = borrowed ? borrowed.getNavigation() : null;
 				}
+				peekedGuid = current.node.id;
 				viewContext.openRecordInOtherPanel(current.node.id);
 				// Opening aside hands focus to that panel's editor. The app only calls
 				// a custom view's onKeyboardNavigation when its own component has focus

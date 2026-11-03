@@ -166,6 +166,7 @@ var plugins = (() => {
         let $menu = null;
         let peekPanelId = null;
         let peekRestoreNav = null;
+        let peekedGuid = null;
         let propMode = null;
         let pendingNameEditGuid = null;
         const fieldsById = /* @__PURE__ */ __name(() => {
@@ -261,8 +262,8 @@ var plugins = (() => {
             }
           }
           if (peekPanelId) {
-            if (peekPanel()) showPeek();
-            else peekPanelId = null;
+            if (!peekPanel()) peekPanelId = null;
+            else if (rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) showPeek();
           }
         }, "setSelection");
         const toggle = /* @__PURE__ */ __name((node) => {
@@ -393,6 +394,7 @@ var plugins = (() => {
             const borrowed = ui.getPanels().find((p) => !p.isSidebar() && (!self || p.getId() !== self.getId()));
             peekRestoreNav = borrowed ? borrowed.getNavigation() : null;
           }
+          peekedGuid = current.node.id;
           viewContext.openRecordInOtherPanel(current.node.id);
           const takeFocusBack = /* @__PURE__ */ __name(() => {
             if (self) ui.setActivePanel(self);
