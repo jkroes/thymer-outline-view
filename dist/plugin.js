@@ -826,7 +826,7 @@ var plugins = (() => {
               });
             }
             $title.appendChild($twisty);
-            const $icon = ui.createIcon(plugin.getConfiguration().icon || "ti-file");
+            const $icon = ui.createIcon(node.record.getIcon(true) || "ti-file");
             $icon.classList.add("outline-icon");
             $title.appendChild($icon);
             const $name = document.createElement("span");
