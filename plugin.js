@@ -1205,7 +1205,8 @@ export class Plugin extends CollectionPlugin {
 					}
 					$title.appendChild($twisty);
 
-					const $icon = ui.createIcon(plugin.getConfiguration().icon || 'ti-file');
+					// The page's own icon, falling back to the collection's.
+					const $icon = ui.createIcon(node.record.getIcon(true) || 'ti-file');
 					$icon.classList.add('outline-icon');
 					$title.appendChild($icon);
 
