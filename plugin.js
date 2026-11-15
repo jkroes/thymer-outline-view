@@ -233,6 +233,22 @@ export class Plugin extends CollectionPlugin {
 			/** guid of a just-created record whose name opens for editing on the next render */
 			let pendingNameEditGuid = null;
 
+			// Windowed rendering: only the rows near the viewport exist in the DOM,
+			// between two spacers sized from measured (or estimated) row heights.
+			/** [start, end) of `rows` currently in the DOM */
+			let win = { start: 0, end: 0 };
+			/** measured row height by guid; unmeasured rows use rowEstimate */
+			const heightCache = new Map();
+			let rowEstimate = 30;
+			let $topPad = null;
+			let $bottomPad = null;
+			/** the panel element that scrolls the view, and the target its scroll events fire on */
+			let scroller = null;
+			let scrollTarget = null;
+			let scrollRaf = 0;
+			/** visibleFields() for the current render, so window re-renders don't re-read config */
+			let renderFields = [];
+
 			// --- collection / view config -------------------------------------
 
 			/** Config is re-read rather than cached: sorting and view edits mutate it. */
@@ -369,7 +385,9 @@ export class Plugin extends CollectionPlugin {
 			const setSelection = (index) => {
 				selectedIndex = Math.max(0, Math.min(index, rows.length - 1));
 				if (!$list) return;
-				$list.querySelectorAll('.outline-row').forEach(($row, i) => {
+				ensureRendered(selectedIndex);
+				$list.querySelectorAll('.outline-row').forEach(($row) => {
+					const i = Number($row.dataset.index);
 					$row.classList.toggle('selected', i === selectedIndex);
 					// The roving Tab stop moves with the selection, so Tab back into
 					// the view returns to the row the user left.
@@ -1145,10 +1163,147 @@ export class Plugin extends CollectionPlugin {
 				return $prop;
 			};
 
+			// --- windowed rendering ----------------------------------------------
+			//
+			// A fully expanded tree can be thousands of rows, and building every one
+			// on each render, toggle and refresh made the view crawl. Only rows within
+			// OVERSCAN_PX of the viewport are built; spacers stand in for the rest.
+
+			const OVERSCAN_PX = 1000;
+			/** re-render once the rendered rows reach closer than this to an edge */
+			const MARGIN_PX = 300;
+
+			const rowHeight = (i) => heightCache.get(rows[i].node.id) ?? rowEstimate;
+
+			const sumHeights = (from, to) => {
+				let y = 0;
+				for (let i = from; i < to; i++) y += rowHeight(i);
+				return y;
+			};
+
+			/** The nearest scrolling ancestor; re-found if the view was re-parented. */
+			const attachScroller = () => {
+				if (scroller && scroller.contains($list)) return;
+				detachScroller();
+				let found = null;
+				for (let el = $list.parentElement; el && el !== document.body; el = el.parentElement) {
+					const oy = getComputedStyle(el).overflowY;
+					if (oy === 'auto' || oy === 'scroll') { found = el; break; }
+				}
+				if (!found && !$list.isConnected) return;
+				scroller = found || document.scrollingElement;
+				scrollTarget = found || window;
+				scrollTarget.addEventListener('scroll', onScroll, { passive: true });
+			};
+
+			const detachScroller = () => {
+				if (scrollTarget) scrollTarget.removeEventListener('scroll', onScroll);
+				if (scrollRaf) cancelAnimationFrame(scrollRaf);
+				scroller = scrollTarget = null;
+				scrollRaf = 0;
+			};
+
+			const onScroll = () => {
+				if (scrollRaf) return;
+				scrollRaf = requestAnimationFrame(() => {
+					scrollRaf = 0;
+					renderWindow(false);
+				});
+			};
+
+			/** The scroller's visible band, in px from the top of the list. */
+			const viewportInList = () => {
+				const listTop = $list.getBoundingClientRect().top;
+				if (!scroller || scroller === document.scrollingElement) {
+					return { from: -listTop, to: window.innerHeight - listTop };
+				}
+				const top = scroller.getBoundingClientRect().top;
+				return { from: top - listTop, to: top - listTop + scroller.clientHeight };
+			};
+
+			/** Row range covering the viewport plus `pad` px either side. */
+			const rangeFor = (pad) => {
+				const { from, to } = viewportInList();
+				const lo = from - pad;
+				const hi = to + pad;
+				let y = 0;
+				let start = -1;
+				let end = rows.length;
+				for (let i = 0; i < rows.length; i++) {
+					if (y >= hi) { end = i; break; }
+					const h = rowHeight(i);
+					if (start === -1 && y + h > lo) start = i;
+					y += h;
+				}
+				if (start === -1) start = Math.max(0, end - 1);
+				return { start, end };
+			};
+
+			const updatePads = () => {
+				$topPad.style.height = `${sumHeights(0, win.start)}px`;
+				$bottomPad.style.height = `${sumHeights(win.end, rows.length)}px`;
+			};
+
+			/**
+			 * Build the rows near the viewport. Without `force` this is a no-op while
+			 * the rendered rows still cover the viewport with MARGIN_PX to spare.
+			 */
+			const renderWindow = (force, depth = 0) => {
+				if (!$list || !$topPad || !rows.length) return;
+				if (!force) {
+					const need = rangeFor(MARGIN_PX);
+					if (need.start >= win.start && need.end <= win.end) return;
+				}
+				win = rangeFor(OVERSCAN_PX);
+				while ($topPad.nextSibling && $topPad.nextSibling !== $bottomPad) {
+					$topPad.nextSibling.remove();
+				}
+				const $frag = document.createDocumentFragment();
+				for (let i = win.start; i < win.end; i++) $frag.appendChild(buildRow(i));
+				$list.insertBefore($frag, $bottomPad);
+				restack();
+
+				// Measure what was built. The first plain row also sets the estimate
+				// for rows never rendered yet.
+				let changed = false;
+				let estimated = heightCache.size > 0;
+				for (let $r = $topPad.nextSibling; $r && $r !== $bottomPad; $r = $r.nextSibling) {
+					const h = $r.offsetHeight;
+					if (!h) continue;
+					if (!estimated && !$r.classList.contains('is-stacked')
+						&& !$r.querySelector('.outline-propedit')) {
+						estimated = true;
+						rowEstimate = h;
+					}
+					if (heightCache.get($r.dataset.guid) !== h) {
+						heightCache.set($r.dataset.guid, h);
+						changed = true;
+					}
+				}
+				updatePads();
+				// Real heights can leave the viewport short of rows; one more pass fixes it.
+				if (changed && depth < 2) renderWindow(false, depth + 1);
+			};
+
+			/** Bring a row into the DOM (and the viewport) before it is selected. */
+			const ensureRendered = (index) => {
+				if (!$topPad || !rows.length || (index >= win.start && index < win.end)) return;
+				if (scroller) {
+					const { from, to } = viewportInList();
+					const top = sumHeights(0, index);
+					const bottom = top + rowHeight(index);
+					if (top < from) scroller.scrollTop -= from - top;
+					else if (bottom > to) scroller.scrollTop += bottom - to;
+				}
+				renderWindow(true);
+			};
+
 			const renderRows = () => {
 				if (!$list) return;
-				const fields = visibleFields();
+				renderFields = visibleFields();
 				$list.innerHTML = '';
+				$topPad = $bottomPad = null;
+				win = { start: 0, end: 0 };
 				rows = hierarchy ? flatten() : [];
 
 				if (rows.length === 0) {
@@ -1159,113 +1314,22 @@ export class Plugin extends CollectionPlugin {
 					return;
 				}
 
-				rows.forEach(({ node, depth }, index) => {
-					const hasChildren = node.children.length > 0;
-					const indent = ROW_PAD_X + depth * DEPTH_STEP;
-
-					const $row = document.createElement('div');
-					$row.className = 'outline-row';
-					// Only ever set while a filter is on: a context row is one the
-					// filter dropped and the tree needed back.
-					if (contextGuids.has(node.id)) $row.classList.add('is-context');
-					$row.dataset.index = String(index);
-					// Roving tabindex: the selected row is the view's single stop in the
-					// browser's Tab order, every other row is focusable only by script.
-					// Tab out of the app's search box has to land ON a row for this
-					// view's own Tab handling to take over and step the list, the way
-					// the built-in List view does; with every row at -1 the browser
-					// walked straight past them to the create card and out of the view.
-					// Unhandled keys (Shift+Tab) still need the focused row here so the
-					// browser walks focus from the row, not from the view root.
-					$row.tabIndex = index === selectedIndex ? 0 : -1;
-					$row.dataset.guid = node.id;
-					// restack() needs the depth indent to line the chips up under the
-					// row icon once they are out of the title line.
-					$row.dataset.indent = String(indent);
-
-					const $title = document.createElement('div');
-					$title.className = 'outline-title';
-					$title.style.paddingLeft = `${indent}px`;
-
-					const $twisty = document.createElement('span');
-					$twisty.className = 'outline-twisty';
-					if (hasChildren) {
-						$twisty.appendChild(ui.createIcon('ti-chevron-right'));
-						$twisty.classList.toggle('expanded', isExpanded(node));
-						// On mouseup, not click: the row opens on mouseup, which fires
-						// first, so a click-phase stopPropagation() here toggles the
-						// node AND navigates to it. Left button only, so middle-click
-						// still falls through to the row's open-aside.
-						$twisty.addEventListener('mouseup', (e) => {
-							if (e.button !== 0) return;
-							e.stopPropagation();
-							e.preventDefault();
-							toggle(node);
-						});
-					}
-					$title.appendChild($twisty);
-
-					// The page's own icon, falling back to the collection's.
-					const $icon = ui.createIcon(node.record.getIcon(true) || 'ti-file');
-					$icon.classList.add('outline-icon');
-					$title.appendChild($icon);
-
-					const $name = document.createElement('span');
-					$name.className = 'outline-name';
-					$name.textContent = node.name;
-					$title.appendChild($name);
-
-					if (hasChildren && !isExpanded(node)) {
-						const $count = document.createElement('span');
-						$count.className = 'outline-count';
-						$count.textContent = String(node.children.length);
-						$title.appendChild($count);
-					}
-
-					const chips = fields
-						.map(field => ({ field, value: propValue(node.record, field) }))
-						.filter(entry => entry.value);
-					if (chips.length) {
-						const $props = document.createElement('span');
-						$props.className = 'outline-props';
-						chips.forEach(({ field, value }) => $props.appendChild(propChip(field, value)));
-						$title.appendChild($props);
-					}
-
-					const $time = document.createElement('span');
-					$time.className = 'outline-time';
-					$time.textContent = timeAgo(node.record.date('Modified'));
-					$title.appendChild($time);
-
-					$row.appendChild($title);
-
-					if (propMode && propMode.guid === node.id) {
-						$row.appendChild(buildPropEditor(node, indent));
-					}
-
-					// Native list cards act on mouseup, not click, so middle-click is
-					// caught too: shift = focus only, middle or cmd/ctrl = other panel,
-					// plain left = this panel.
-					$row.addEventListener('mouseup', (e) => {
-						if (e.button !== 0 && e.button !== 1) return;
-						hidePeek();
-						setSelection(index);
-						if (e.button === 0 && e.shiftKey) {
-							e.preventDefault();
-							return;
-						}
-						if (e.button === 1 || e.metaKey || e.ctrlKey) {
-							viewContext.openRecordInOtherPanel(node.id);
-						} else {
-							viewContext.openRecordInThisPanel(node.id);
-						}
-						e.preventDefault();
+				$topPad = document.createElement('div');
+				$bottomPad = document.createElement('div');
+				$topPad.className = $bottomPad.className = 'outline-pad';
+				$list.append($topPad, $bottomPad);
+				attachScroller();
+				renderWindow(true);
+				// On the first render the view may not be in the document yet, so
+				// there is no scroller to measure against; look again once it is.
+				if (!scroller) {
+					requestAnimationFrame(() => {
+						if (!$list) return;
+						attachScroller();
+						renderWindow(false);
 					});
+				}
 
-					$list.appendChild($row);
-				});
-
-				restack();
 				setSelection(selectedIndex);
 
 				// A record created from the create card or Shift+Enter
@@ -1278,6 +1342,115 @@ export class Plugin extends CollectionPlugin {
 						startNameEdit(rows[at].node, true);
 					}
 				}
+			};
+
+			const buildRow = (index) => {
+				const { node, depth } = rows[index];
+				const fields = renderFields;
+				const hasChildren = node.children.length > 0;
+				const indent = ROW_PAD_X + depth * DEPTH_STEP;
+
+				const $row = document.createElement('div');
+				$row.className = 'outline-row';
+				// Only ever set while a filter is on: a context row is one the
+				// filter dropped and the tree needed back.
+				if (contextGuids.has(node.id)) $row.classList.add('is-context');
+				$row.dataset.index = String(index);
+				// Roving tabindex: the selected row is the view's single stop in the
+				// browser's Tab order, every other row is focusable only by script.
+				// Tab out of the app's search box has to land ON a row for this
+				// view's own Tab handling to take over and step the list, the way
+				// the built-in List view does; with every row at -1 the browser
+				// walked straight past them to the create card and out of the view.
+				// Unhandled keys (Shift+Tab) still need the focused row here so the
+				// browser walks focus from the row, not from the view root.
+				$row.tabIndex = index === selectedIndex ? 0 : -1;
+				if (index === selectedIndex) $row.classList.add('selected');
+				$row.dataset.guid = node.id;
+				// restack() needs the depth indent to line the chips up under the
+				// row icon once they are out of the title line.
+				$row.dataset.indent = String(indent);
+
+				const $title = document.createElement('div');
+				$title.className = 'outline-title';
+				$title.style.paddingLeft = `${indent}px`;
+
+				const $twisty = document.createElement('span');
+				$twisty.className = 'outline-twisty';
+				if (hasChildren) {
+					$twisty.appendChild(ui.createIcon('ti-chevron-right'));
+					$twisty.classList.toggle('expanded', isExpanded(node));
+					// On mouseup, not click: the row opens on mouseup, which fires
+					// first, so a click-phase stopPropagation() here toggles the
+					// node AND navigates to it. Left button only, so middle-click
+					// still falls through to the row's open-aside.
+					$twisty.addEventListener('mouseup', (e) => {
+						if (e.button !== 0) return;
+						e.stopPropagation();
+						e.preventDefault();
+						toggle(node);
+					});
+				}
+				$title.appendChild($twisty);
+
+				// The page's own icon, falling back to the collection's.
+				const $icon = ui.createIcon(node.record.getIcon(true) || 'ti-file');
+				$icon.classList.add('outline-icon');
+				$title.appendChild($icon);
+
+				const $name = document.createElement('span');
+				$name.className = 'outline-name';
+				$name.textContent = node.name;
+				$title.appendChild($name);
+
+				if (hasChildren && !isExpanded(node)) {
+					const $count = document.createElement('span');
+					$count.className = 'outline-count';
+					$count.textContent = String(node.children.length);
+					$title.appendChild($count);
+				}
+
+				const chips = fields
+					.map(field => ({ field, value: propValue(node.record, field) }))
+					.filter(entry => entry.value);
+				if (chips.length) {
+					const $props = document.createElement('span');
+					$props.className = 'outline-props';
+					chips.forEach(({ field, value }) => $props.appendChild(propChip(field, value)));
+					$title.appendChild($props);
+				}
+
+				const $time = document.createElement('span');
+				$time.className = 'outline-time';
+				$time.textContent = timeAgo(node.record.date('Modified'));
+				$title.appendChild($time);
+
+				$row.appendChild($title);
+
+				if (propMode && propMode.guid === node.id) {
+					$row.appendChild(buildPropEditor(node, indent));
+				}
+
+				// Native list cards act on mouseup, not click, so middle-click is
+				// caught too: shift = focus only, middle or cmd/ctrl = other panel,
+				// plain left = this panel.
+				$row.addEventListener('mouseup', (e) => {
+					if (e.button !== 0 && e.button !== 1) return;
+					hidePeek();
+					setSelection(index);
+					if (e.button === 0 && e.shiftKey) {
+						e.preventDefault();
+						return;
+					}
+					if (e.button === 1 || e.metaKey || e.ctrlKey) {
+						viewContext.openRecordInOtherPanel(node.id);
+					} else {
+						viewContext.openRecordInThisPanel(node.id);
+					}
+					e.preventDefault();
+				});
+
+				return $row;
 			};
 
 			/** Build the chrome once; renderRows() then only swaps out the list body. */
@@ -1385,6 +1558,7 @@ export class Plugin extends CollectionPlugin {
 							background: var(--cmdpal-selected-bg-color);
 							color: var(--cmdpal-selected-fg-color);
 						}
+						.outline-pad { flex: none; }
 						.outline-list {
 							display: flex;
 							flex-direction: column;
@@ -1639,9 +1813,16 @@ export class Plugin extends CollectionPlugin {
 					renderRows();
 				},
 
-				onPanelResize: () => restack(),
+				// Width decides which rows stack onto two lines, so every measured
+				// height is suspect after a resize.
+				onPanelResize: () => {
+					heightCache.clear();
+					renderWindow(true);
+				},
 
 				onDestroy: () => {
+					detachScroller();
+					$topPad = $bottomPad = null;
 					closeMenu();
 					hidePeek();
 					propMode = null;
