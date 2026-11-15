@@ -374,7 +374,11 @@ Three limitations, all from the same missing primitive:
   immediately, on the next frame, and again at 120ms, because the aside paints
   and focuses its editor after the call returns. A single synchronous grab loses
   that race.
-- **Committing makes the panel blink.** Native peek *replaces* the panel's
+- **Committing makes the panel blink — but only after arrowing.** Since
+  2026-11-15 a peek that showed a single record commits in place (`peekSteps`):
+  the panel it opened started empty, and `_navigateTo` pushes no history when
+  leaving an Empty view, so there is nothing to collapse. Verified live by the
+  user (Space, Enter, ⌘[ behaves like a normal aside). Native peek *replaces* the panel's
   navigation each step, so a commit leaves one history entry and ⌘+[ closes the
   panel. Nothing in the SDK replaces a navigation — `navigateTo` takes no
   replace flag and its wrapper forwards only the navigation object — so every

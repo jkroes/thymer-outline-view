@@ -219,6 +219,7 @@ var plugins = (() => {
         let peekPanelId = null;
         let peekRestoreNav = null;
         let peekedGuid = null;
+        let peekSteps = 0;
         let propMode = null;
         let pendingNameEditGuid = null;
         let win = { start: 0, end: 0 };
@@ -443,6 +444,10 @@ var plugins = (() => {
             if (panel) ui.setActivePanel(panel);
             return;
           }
+          if (peekSteps <= 1) {
+            if (panel) ui.setActivePanel(panel);
+            return;
+          }
           if (panel) ui.closePanel(panel);
           if (current) {
             setTimeout(() => viewContext.openRecordInOtherPanel(current.node.id), 220);
@@ -456,7 +461,9 @@ var plugins = (() => {
           if (!peekPanelId) {
             const borrowed = ui.getPanels().find((p) => !p.isSidebar() && (!self || p.getId() !== self.getId()));
             peekRestoreNav = borrowed ? borrowed.getNavigation() : null;
+            peekSteps = 0;
           }
+          if (!peekPanelId || peekedGuid !== current.node.id) peekSteps++;
           peekedGuid = current.node.id;
           viewContext.openRecordInOtherPanel(current.node.id);
           const takeFocusBack = /* @__PURE__ */ __name(() => {

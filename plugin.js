@@ -290,6 +290,11 @@ export class Plugin extends CollectionPlugin {
 			let peekRestoreNav = null;
 			/** guid of the record the peek panel was last pointed at */
 			let peekedGuid = null;
+			/**
+			 * Records the current peek has shown. Each one after the first left a
+			 * history entry in the peek panel, which is what commitPeek() cleans up.
+			 */
+			let peekSteps = 0;
 			/** E-mode: {guid, index} — the row whose property list is open, and the highlighted field */
 			let propMode = null;
 			/** guid of a just-created record whose name opens for editing on the next render */
@@ -686,6 +691,15 @@ export class Plugin extends CollectionPlugin {
 					if (panel) ui.setActivePanel(panel);
 					return;
 				}
+				// A peek that showed only one record left no history to clean up: the
+				// panel it opened started empty, and the app pushes no history entry
+				// when navigating away from an empty panel (`_navigateTo`:
+				// `state.view.type == Empty && (t = true)`, read 2026-11-15). Keep the
+				// panel, which avoids the close-and-reopen blink in the common case.
+				if (peekSteps <= 1) {
+					if (panel) ui.setActivePanel(panel);
+					return;
+				}
 				// Still required as of 1.0.18 / 2026-08-01: without this, ⌘[ after a
 				// commit walks back through every record the peek passed over.
 				if (panel) ui.closePanel(panel);
@@ -713,7 +727,11 @@ export class Plugin extends CollectionPlugin {
 					const borrowed = ui.getPanels().find(p => !p.isSidebar()
 						&& (!self || p.getId() !== self.getId()));
 					peekRestoreNav = borrowed ? borrowed.getNavigation() : null;
+					peekSteps = 0;
 				}
+				// Re-peeking the record already shown is a no-op navigation (the app
+				// skips a navigation equal to the current one) and adds no history.
+				if (!peekPanelId || peekedGuid !== current.node.id) peekSteps++;
 				peekedGuid = current.node.id;
 				viewContext.openRecordInOtherPanel(current.node.id);
 				// Opening aside hands focus to that panel's editor. The app only calls

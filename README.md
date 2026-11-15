@@ -131,7 +131,7 @@ Some parts of Thymer's plugin API that aren't open yet, so custom views can't mi
   writable from a plugin, so "Custom Order" isn't offered as a sort either.
 - No `Alt+Enter` (create above) — there's no positioned-create call.
 - No trash shortcut.
-- Committing a peek makes the side panel blink because the plugin has to close
+- Committing a peek after arrowing through several records makes the side panel blink, because the plugin has to close
   and reopen the side panel to keep the back-button history tidy.
 - The status bar's shortcut hints are the view's own while it has focus, but
   they're drawn over Thymer's (which are hidden), not a real replacement — a
