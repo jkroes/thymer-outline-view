@@ -119,12 +119,74 @@ var plugins = (() => {
     return (fields || []).filter((field) => field.type === "record" && field.active !== false && field.many !== true && (field.id === "parent_page" || field.filter_colguid === collectionGuid));
   }
   __name(hierarchyCandidates, "hierarchyCandidates");
+  var KEYS_BODY_CLASS = "plg-outline-keys";
+  function keyHintsHtml(peeking) {
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    const mod = /* @__PURE__ */ __name((sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`, "mod");
+    const cmd = mod("\u2318", "Ctrl");
+    const shift = mod("\u21E7", "Shift");
+    const hints = peeking ? [
+      ["Esc", "Exit Peek"],
+      ["\u21B5", "Open"],
+      ["\u2191\u2193", "Browse"]
+    ] : [
+      ["\u2191\u2193", "Move"],
+      [`${cmd}\u2191\u2193`, "Fold"],
+      [`${cmd}/`, "Fold all"],
+      ["\u21B5", "Open"],
+      [`${cmd}\u21B5`, "Open aside"],
+      ["Space", "Peek"],
+      ["E", "Edit"],
+      [`${shift}\u21B5`, "New"],
+      ["/", "Search"]
+    ];
+    return hints.map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join("");
+  }
+  __name(keyHintsHtml, "keyHintsHtml");
   var Plugin = class extends CollectionPlugin {
     static {
       __name(this, "Plugin");
     }
     onLoad() {
       this.registerOutlineView();
+    }
+    onUnload() {
+      document.body.classList.remove(KEYS_BODY_CLASS);
+      if (this.keysObserver) this.keysObserver.disconnect();
+      if (this.keysItem) this.keysItem.remove();
+      this.keysItem = this.keysObserver = null;
+    }
+    /**
+     * Show or hide the Outline key hints. A plugin can only APPEND status-bar
+     * items (they land on the right), so the hints are one item of ours,
+     * pinned over the left edge by CSS while the body class hides the app's
+     * own hints there. One item per plugin, shared by every view instance.
+     */
+    showKeyHints(on, peeking = false) {
+      if (on && !this.keysItem) {
+        this.keysPeeking = peeking;
+        this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking) });
+        const $el = this.keysItem.getElement();
+        if ($el) {
+          $el.classList.add("outline-keys");
+          const $bar = $el.closest(".statusbar--status-bar");
+          const $right = $bar && $bar.querySelector(".statusbar--right");
+          if ($right) {
+            const fit = /* @__PURE__ */ __name(() => {
+              $el.style.right = `${$right.offsetWidth + 10}px`;
+            }, "fit");
+            this.keysObserver = new ResizeObserver(fit);
+            this.keysObserver.observe($right);
+            this.keysObserver.observe($bar);
+            fit();
+          }
+        }
+      }
+      if (on && this.keysItem && this.keysPeeking !== peeking) {
+        this.keysPeeking = peeking;
+        this.keysItem.setHtmlLabel(keyHintsHtml(peeking));
+      }
+      document.body.classList.toggle(KEYS_BODY_CLASS, on);
     }
     /**
      * Claim every custom view the collection has, rather than one hardcoded id.
@@ -142,10 +204,44 @@ var plugins = (() => {
       const views = (this.getConfiguration().views || []).filter((v) => v.type === "custom");
       for (const view of views) this.registerOn(view.id);
     }
+    /**
+     * Hand each view instance Thymer's own records-view object, for its native
+     * peek. Not SDK: the SDK plugin class EXTENDS the app's internal collection
+     * plugin, so `this.customViewHooks` is the very Map `views.register()`
+     * writes into, and the app calls its entries with the internal view
+     * (`customViewHooks.get(id)(view)`, read 2026-11-15). register() drops that
+     * argument before calling our factory, so wrap the entry and park the view
+     * where the factory, which runs synchronously inside it, can pick it up.
+     * Missing or changed internals leave `pendingNativeView` unset, and the view
+     * falls back to the SDK-only peek.
+     */
+    captureNativeView(viewId) {
+      const hooks = this.customViewHooks;
+      const make = hooks instanceof Map ? hooks.get(viewId) : null;
+      if (typeof make !== "function") return;
+      hooks.set(viewId, (view) => {
+        this.pendingNativeView = view;
+        try {
+          return make(view);
+        } finally {
+          this.pendingNativeView = null;
+        }
+      });
+    }
     registerOn(viewId) {
       this.views.register(viewId, (viewContext) => {
         const ui = this.ui;
         const plugin = this;
+        const nativePeek = (() => {
+          const view = plugin.pendingNativeView;
+          const ok = view && [
+            "startRecordPreview",
+            "commitRecordPreview",
+            "dismissRecordPreview",
+            "getPeekStatusBarContext"
+          ].every((name) => typeof view[name] === "function");
+          return ok ? view : null;
+        })();
         const collectionGuid = /* @__PURE__ */ __name(() => plugin.collection.getGuid(), "collectionGuid");
         const storageKey = `outline-collapsed:${this.getConfiguration().name}:${viewId}`;
         let collapsed = /* @__PURE__ */ new Set();
@@ -167,6 +263,7 @@ var plugins = (() => {
         let peekPanelId = null;
         let peekRestoreNav = null;
         let peekedGuid = null;
+        let peekSteps = 0;
         let propMode = null;
         let pendingNameEditGuid = null;
         let win = { start: 0, end: 0 };
@@ -272,9 +369,8 @@ var plugins = (() => {
               $selected.focus({ preventScroll: true });
             }
           }
-          if (peekPanelId) {
-            if (!peekPanel()) peekPanelId = null;
-            else if (rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) showPeek();
+          if (isPeeking() && rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) {
+            showPeek();
           }
         }, "setSelection");
         const toggle = /* @__PURE__ */ __name((node) => {
@@ -362,11 +458,34 @@ var plugins = (() => {
           $input.focus();
           return true;
         }, "focusAppSearch");
+        const isPeeking = /* @__PURE__ */ __name(() => {
+          if (nativePeek) {
+            try {
+              return !!nativePeek.getPeekStatusBarContext();
+            } catch (err) {
+              return false;
+            }
+          }
+          if (peekPanelId && !peekPanel()) peekPanelId = null;
+          return !!peekPanelId;
+        }, "isPeeking");
+        let hintTimer = null;
+        const syncKeyHints = /* @__PURE__ */ __name(() => {
+          if (viewFocused) plugin.showKeyHints(true, isPeeking());
+        }, "syncKeyHints");
+        const stopHintTimer = /* @__PURE__ */ __name(() => {
+          if (hintTimer) clearInterval(hintTimer);
+          hintTimer = null;
+        }, "stopHintTimer");
         const peekPanel = /* @__PURE__ */ __name(() => {
           if (!peekPanelId) return null;
           return ui.getPanels().find((p) => p.getId() === peekPanelId) || null;
         }, "peekPanel");
         const hidePeek = /* @__PURE__ */ __name(() => {
+          if (nativePeek) {
+            if (isPeeking()) nativePeek.dismissRecordPreview();
+            return;
+          }
           const panel = peekPanel();
           const restore = peekRestoreNav;
           peekPanelId = null;
@@ -382,12 +501,20 @@ var plugins = (() => {
           }
         }, "hidePeek");
         const commitPeek = /* @__PURE__ */ __name(() => {
+          if (nativePeek) {
+            nativePeek.commitRecordPreview();
+            return;
+          }
           const current = rows[selectedIndex];
           const panel = peekPanel();
           const borrowed = !!peekRestoreNav;
           peekPanelId = null;
           peekRestoreNav = null;
           if (borrowed) {
+            if (panel) ui.setActivePanel(panel);
+            return;
+          }
+          if (peekSteps <= 1) {
             if (panel) ui.setActivePanel(panel);
             return;
           }
@@ -399,12 +526,19 @@ var plugins = (() => {
         const showPeek = /* @__PURE__ */ __name(() => {
           const current = rows[selectedIndex];
           if (!current) return;
+          if (nativePeek) {
+            peekedGuid = current.node.id;
+            nativePeek.startRecordPreview(current.node.id);
+            return;
+          }
           const self = ownPanel();
           const before = new Set(ui.getPanels().map((p) => p.getId()));
           if (!peekPanelId) {
             const borrowed = ui.getPanels().find((p) => !p.isSidebar() && (!self || p.getId() !== self.getId()));
             peekRestoreNav = borrowed ? borrowed.getNavigation() : null;
+            peekSteps = 0;
           }
+          if (!peekPanelId || peekedGuid !== current.node.id) peekSteps++;
           peekedGuid = current.node.id;
           viewContext.openRecordInOtherPanel(current.node.id);
           const takeFocusBack = /* @__PURE__ */ __name(() => {
@@ -965,6 +1099,7 @@ var plugins = (() => {
           const $twisty = document.createElement("span");
           $twisty.className = "outline-twisty";
           if (hasChildren) {
+            $twisty.style.setProperty("--twisty-reach", `${indent}px`);
             $twisty.appendChild(ui.createIcon("ti-chevron-right"));
             $twisty.classList.toggle("expanded", isExpanded(node));
             $twisty.addEventListener("mouseup", (e) => {
@@ -1117,6 +1252,36 @@ var plugins = (() => {
 							color: var(--cmdpal-selected-fg-color);
 						}
 						.outline-pad { flex: none; }
+						/*
+						 * Key hints: our status-bar item is pinned over the bar's left
+						 * edge while the app's own hints there are hidden. Absolute
+						 * against the bar escapes .statusbar--right's overflow clip.
+						 */
+						.outline-keys { display: none !important; }
+						body.${KEYS_BODY_CLASS} .statusbar--status-bar { position: relative; }
+						body.${KEYS_BODY_CLASS} .statusbar--left > * { display: none !important; }
+						body.${KEYS_BODY_CLASS} .outline-keys {
+							display: flex !important;
+							position: absolute;
+							left: 0;
+							top: 0;
+							bottom: 0;
+							align-items: center;
+							margin: 0;
+							padding: 0;
+							overflow: hidden;
+						}
+						.outline-keys .statusbar-item--icon { display: none; }
+						.outline-keys .statusbar-item--label {
+							display: flex;
+							flex-wrap: wrap;
+							align-items: center;
+							column-gap: 5px;
+							row-gap: 20px;
+							height: 19px;
+							overflow: hidden;
+							font-size: 12px;
+						}
 						.outline-list {
 							display: flex;
 							flex-direction: column;
@@ -1147,9 +1312,27 @@ var plugins = (() => {
 							flex: 0 0 16px;
 							color: var(--text-muted);
 							border-radius: 3px;
+							position: relative;
+						}
+						/*
+						 * The chevron alone is a 16px target beside a row that opens on
+						 * click, so misses zoom into the page. This invisible box widens
+						 * the target to the full row height, left across the indent to the
+						 * row edge, and right across the gap to the page icon. The
+						 * chevron rotates inside it, not the twisty, so the box stays put.
+						 */
+						.outline-twisty:not(:empty)::before {
+							content: "";
+							position: absolute;
+							top: -7px;
+							bottom: -7px;
+							left: calc(-1 * var(--twisty-reach, 0px));
+							right: -${ROW_GAP}px;
+						}
+						.outline-twisty > * {
 							transition: transform 0.12s ease;
 						}
-						.outline-twisty.expanded {
+						.outline-twisty.expanded > * {
 							transform: rotate(90deg);
 						}
 						.outline-twisty:hover {
@@ -1372,6 +1555,8 @@ var plugins = (() => {
             renderWindow(true);
           }, "onPanelResize"),
           onDestroy: /* @__PURE__ */ __name(() => {
+            stopHintTimer();
+            if (viewFocused) plugin.showKeyHints(false);
             detachScroller();
             $topPad = $bottomPad = null;
             closeMenu();
@@ -1389,10 +1574,14 @@ var plugins = (() => {
           // selected row takes DOM focus then rather than on render.
           onFocus: /* @__PURE__ */ __name(() => {
             viewFocused = true;
+            syncKeyHints();
+            if (!hintTimer) hintTimer = setInterval(syncKeyHints, 300);
             if (rows.length) setSelection(selectedIndex);
           }, "onFocus"),
           onBlur: /* @__PURE__ */ __name(() => {
             viewFocused = false;
+            stopHintTimer();
+            plugin.showKeyHints(false);
           }, "onBlur"),
           onKeyboardNavigation: /* @__PURE__ */ __name(({ e }) => {
             if ($menu) return;
@@ -1442,11 +1631,11 @@ var plugins = (() => {
             }
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
-              if (peekPanelId) commitPeek();
+              if (isPeeking()) commitPeek();
               else openSelected(true);
               return;
             }
-            if (peekPanelId && e.key === "Escape") {
+            if (e.key === "Escape" && isPeeking()) {
               e.preventDefault();
               hidePeek();
               return;
@@ -1472,6 +1661,8 @@ var plugins = (() => {
               } else if (current.parent) {
                 const up = rows.findIndex((r) => r.node.id === current.parent.id);
                 if (up !== -1) setSelection(up);
+              } else if (selectedIndex === 0) {
+                focusAppSearch();
               } else {
                 selectNext(-1);
               }
@@ -1512,13 +1703,14 @@ var plugins = (() => {
                 break;
               case "Enter":
                 e.preventDefault();
-                if (peekPanelId) commitPeek();
+                if (isPeeking()) commitPeek();
                 else openSelected(false);
                 break;
             }
           }, "onKeyboardNavigation")
         };
       });
+      this.captureNativeView(viewId);
     }
   };
   return __toCommonJS(plugin_exports);

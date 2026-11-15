@@ -149,10 +149,83 @@ function hierarchyCandidates(fields, collectionGuid) {
 		&& (field.id === 'parent_page' || field.filter_colguid === collectionGuid));
 }
 
+/** Set on <body> while an Outline view has focus; swaps in the view's key hints. */
+const KEYS_BODY_CLASS = 'plg-outline-keys';
+
+/**
+ * The status-bar hints shown while an Outline view has focus, in the app's own
+ * markup (.statusbar-item > .statusbar--kbd + .statusbar--kbd-label, read off
+ * the live status bar 2026-11-15) so they pick up its styling.
+ */
+function keyHintsHtml(peeking) {
+	const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+	const mod = (sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`;
+	const cmd = mod('⌘', 'Ctrl');
+	const shift = mod('⇧', 'Shift');
+	// While peeking, the set the app's own views show then (getPeekStatusBarContext).
+	const hints = peeking ? [
+		['Esc', 'Exit Peek'],
+		['↵', 'Open'],
+		['↑↓', 'Browse'],
+	] : [
+		['↑↓', 'Move'],
+		[`${cmd}↑↓`, 'Fold'],
+		[`${cmd}/`, 'Fold all'],
+		['↵', 'Open'],
+		[`${cmd}↵`, 'Open aside'],
+		['Space', 'Peek'],
+		['E', 'Edit'],
+		[`${shift}↵`, 'New'],
+		['/', 'Search'],
+	];
+	return hints.map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
+}
+
 export class Plugin extends CollectionPlugin {
 
 	onLoad() {
 		this.registerOutlineView();
+	}
+
+	onUnload() {
+		document.body.classList.remove(KEYS_BODY_CLASS);
+		if (this.keysObserver) this.keysObserver.disconnect();
+		if (this.keysItem) this.keysItem.remove();
+		this.keysItem = this.keysObserver = null;
+	}
+
+	/**
+	 * Show or hide the Outline key hints. A plugin can only APPEND status-bar
+	 * items (they land on the right), so the hints are one item of ours,
+	 * pinned over the left edge by CSS while the body class hides the app's
+	 * own hints there. One item per plugin, shared by every view instance.
+	 */
+	showKeyHints(on, peeking = false) {
+		if (on && !this.keysItem) {
+			this.keysPeeking = peeking;
+			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking) });
+			const $el = this.keysItem.getElement();
+			if ($el) {
+				$el.classList.add('outline-keys');
+				// Pinned items don't shrink with the window, so stop the strip
+				// where the right-hand items begin; hints that no longer fit wrap
+				// onto a clipped second line and drop out whole, from the end.
+				const $bar = $el.closest('.statusbar--status-bar');
+				const $right = $bar && $bar.querySelector('.statusbar--right');
+				if ($right) {
+					const fit = () => { $el.style.right = `${$right.offsetWidth + 10}px`; };
+					this.keysObserver = new ResizeObserver(fit);
+					this.keysObserver.observe($right);
+					this.keysObserver.observe($bar);
+					fit();
+				}
+			}
+		}
+		if (on && this.keysItem && this.keysPeeking !== peeking) {
+			this.keysPeeking = peeking;
+			this.keysItem.setHtmlLabel(keyHintsHtml(peeking));
+		}
+		document.body.classList.toggle(KEYS_BODY_CLASS, on);
 	}
 
 	/**
@@ -173,10 +246,49 @@ export class Plugin extends CollectionPlugin {
 		for (const view of views) this.registerOn(view.id);
 	}
 
+	/**
+	 * Hand each view instance Thymer's own records-view object, for its native
+	 * peek. Not SDK: the SDK plugin class EXTENDS the app's internal collection
+	 * plugin, so `this.customViewHooks` is the very Map `views.register()`
+	 * writes into, and the app calls its entries with the internal view
+	 * (`customViewHooks.get(id)(view)`, read 2026-11-15). register() drops that
+	 * argument before calling our factory, so wrap the entry and park the view
+	 * where the factory, which runs synchronously inside it, can pick it up.
+	 * Missing or changed internals leave `pendingNativeView` unset, and the view
+	 * falls back to the SDK-only peek.
+	 */
+	captureNativeView(viewId) {
+		const hooks = this.customViewHooks;
+		const make = hooks instanceof Map ? hooks.get(viewId) : null;
+		if (typeof make !== 'function') return;
+		hooks.set(viewId, (view) => {
+			this.pendingNativeView = view;
+			try {
+				return make(view);
+			} finally {
+				this.pendingNativeView = null;
+			}
+		});
+	}
+
 	registerOn(viewId) {
 		this.views.register(viewId, (viewContext) => {
 			const ui = this.ui;
 			const plugin = this;
+			/**
+			 * The app's records-view object for this instance, when its native peek
+			 * is usable (see captureNativeView). Native peek previews in the side
+			 * panel without adding history and leaves focus here; Enter commits it
+			 * in place and Escape restores what the side panel showed before. None of
+			 * the SDK-only peek workarounds below run while this is set.
+			 */
+			const nativePeek = (() => {
+				const view = plugin.pendingNativeView;
+				const ok = view && ['startRecordPreview', 'commitRecordPreview',
+					'dismissRecordPreview', 'getPeekStatusBarContext']
+					.every(name => typeof view[name] === 'function');
+				return ok ? view : null;
+			})();
 			const collectionGuid = () => plugin.collection.getGuid();
 			// Per VIEW, not per collection: two Outline views over different
 			// properties are different trees, so a shared key would have
@@ -228,6 +340,11 @@ export class Plugin extends CollectionPlugin {
 			let peekRestoreNav = null;
 			/** guid of the record the peek panel was last pointed at */
 			let peekedGuid = null;
+			/**
+			 * Records the current peek has shown. Each one after the first left a
+			 * history entry in the peek panel, which is what commitPeek() cleans up.
+			 */
+			let peekSteps = 0;
 			/** E-mode: {guid, index} — the row whose property list is open, and the highlighted field */
 			let propMode = null;
 			/** guid of a just-created record whose name opens for editing on the next render */
@@ -422,9 +539,8 @@ export class Plugin extends CollectionPlugin {
 				// runs on every render and on onFocus, and showPeek() itself takes focus
 				// back three times — re-peeking from here looped onFocus → showPeek
 				// without end, each pass queueing two more timed grabs, and froze the app.
-				if (peekPanelId) {
-					if (!peekPanel()) peekPanelId = null;
-					else if (rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) showPeek();
+				if (isPeeking() && rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) {
+					showPeek();
 				}
 			};
 
@@ -569,6 +685,40 @@ export class Plugin extends CollectionPlugin {
 				return true;
 			};
 
+			/**
+			 * Whether a peek is up. Native: the app's own test (its peek status-bar
+			 * context exists only while the panel previews), so a peek the user
+			 * dismissed from the side panel itself reads as gone. SDK-only: the
+			 * stored panel, dropped once the user has closed it.
+			 */
+			const isPeeking = () => {
+				if (nativePeek) {
+					try {
+						return !!nativePeek.getPeekStatusBarContext();
+					} catch (err) {
+						return false;
+					}
+				}
+				if (peekPanelId && !peekPanel()) peekPanelId = null;
+				return !!peekPanelId;
+			};
+
+			/**
+			 * The app shows peek hints only for its own views: the status bar asks
+			 * the focused component for them through a minified method, which the
+			 * custom-view host doesn't implement. So our strip switches to the peek
+			 * set itself. A peek can end from the side panel too, with no event this
+			 * view hears, so poll while focused — it's one cheap call.
+			 */
+			let hintTimer = null;
+			const syncKeyHints = () => {
+				if (viewFocused) plugin.showKeyHints(true, isPeeking());
+			};
+			const stopHintTimer = () => {
+				if (hintTimer) clearInterval(hintTimer);
+				hintTimer = null;
+			};
+
 			/** The peek panel, re-resolved each time — panel objects don't outlive much. */
 			const peekPanel = () => {
 				if (!peekPanelId) return null;
@@ -583,6 +733,10 @@ export class Plugin extends CollectionPlugin {
 			 * panel instead would throw away something the user had open.
 			 */
 			const hidePeek = () => {
+				if (nativePeek) {
+					if (isPeeking()) nativePeek.dismissRecordPreview();
+					return;
+				}
 				const panel = peekPanel();
 				const restore = peekRestoreNav;
 				peekPanelId = null;
@@ -611,6 +765,10 @@ export class Plugin extends CollectionPlugin {
 			 * the final record, which starts its history over.
 			 */
 			const commitPeek = () => {
+				if (nativePeek) {
+					nativePeek.commitRecordPreview();
+					return;
+				}
 				const current = rows[selectedIndex];
 				const panel = peekPanel();
 				const borrowed = !!peekRestoreNav;
@@ -621,6 +779,15 @@ export class Plugin extends CollectionPlugin {
 				// panel the user opened themselves. Its history keeps an entry per
 				// record peeked at, which is the same limitation described below.
 				if (borrowed) {
+					if (panel) ui.setActivePanel(panel);
+					return;
+				}
+				// A peek that showed only one record left no history to clean up: the
+				// panel it opened started empty, and the app pushes no history entry
+				// when navigating away from an empty panel (`_navigateTo`:
+				// `state.view.type == Empty && (t = true)`, read 2026-11-15). Keep the
+				// panel, which avoids the close-and-reopen blink in the common case.
+				if (peekSteps <= 1) {
 					if (panel) ui.setActivePanel(panel);
 					return;
 				}
@@ -640,6 +807,11 @@ export class Plugin extends CollectionPlugin {
 			const showPeek = () => {
 				const current = rows[selectedIndex];
 				if (!current) return;
+				if (nativePeek) {
+					peekedGuid = current.node.id;
+					nativePeek.startRecordPreview(current.node.id);
+					return;
+				}
 				const self = ownPanel();
 				const before = new Set(ui.getPanels().map(p => p.getId()));
 				// Read the panel the peek is about to take over BEFORE taking it over.
@@ -651,7 +823,11 @@ export class Plugin extends CollectionPlugin {
 					const borrowed = ui.getPanels().find(p => !p.isSidebar()
 						&& (!self || p.getId() !== self.getId()));
 					peekRestoreNav = borrowed ? borrowed.getNavigation() : null;
+					peekSteps = 0;
 				}
+				// Re-peeking the record already shown is a no-op navigation (the app
+				// skips a navigation equal to the current one) and adds no history.
+				if (!peekPanelId || peekedGuid !== current.node.id) peekSteps++;
 				peekedGuid = current.node.id;
 				viewContext.openRecordInOtherPanel(current.node.id);
 				// Opening aside hands focus to that panel's editor. The app only calls
@@ -1378,6 +1554,9 @@ export class Plugin extends CollectionPlugin {
 				const $twisty = document.createElement('span');
 				$twisty.className = 'outline-twisty';
 				if (hasChildren) {
+					// The click target reaches back over the indent to the row edge;
+					// see .outline-twisty::before.
+					$twisty.style.setProperty('--twisty-reach', `${indent}px`);
 					$twisty.appendChild(ui.createIcon('ti-chevron-right'));
 					$twisty.classList.toggle('expanded', isExpanded(node));
 					// On mouseup, not click: the row opens on mouseup, which fires
@@ -1559,6 +1738,36 @@ export class Plugin extends CollectionPlugin {
 							color: var(--cmdpal-selected-fg-color);
 						}
 						.outline-pad { flex: none; }
+						/*
+						 * Key hints: our status-bar item is pinned over the bar's left
+						 * edge while the app's own hints there are hidden. Absolute
+						 * against the bar escapes .statusbar--right's overflow clip.
+						 */
+						.outline-keys { display: none !important; }
+						body.${KEYS_BODY_CLASS} .statusbar--status-bar { position: relative; }
+						body.${KEYS_BODY_CLASS} .statusbar--left > * { display: none !important; }
+						body.${KEYS_BODY_CLASS} .outline-keys {
+							display: flex !important;
+							position: absolute;
+							left: 0;
+							top: 0;
+							bottom: 0;
+							align-items: center;
+							margin: 0;
+							padding: 0;
+							overflow: hidden;
+						}
+						.outline-keys .statusbar-item--icon { display: none; }
+						.outline-keys .statusbar-item--label {
+							display: flex;
+							flex-wrap: wrap;
+							align-items: center;
+							column-gap: 5px;
+							row-gap: 20px;
+							height: 19px;
+							overflow: hidden;
+							font-size: 12px;
+						}
 						.outline-list {
 							display: flex;
 							flex-direction: column;
@@ -1589,9 +1798,27 @@ export class Plugin extends CollectionPlugin {
 							flex: 0 0 16px;
 							color: var(--text-muted);
 							border-radius: 3px;
+							position: relative;
+						}
+						/*
+						 * The chevron alone is a 16px target beside a row that opens on
+						 * click, so misses zoom into the page. This invisible box widens
+						 * the target to the full row height, left across the indent to the
+						 * row edge, and right across the gap to the page icon. The
+						 * chevron rotates inside it, not the twisty, so the box stays put.
+						 */
+						.outline-twisty:not(:empty)::before {
+							content: "";
+							position: absolute;
+							top: -7px;
+							bottom: -7px;
+							left: calc(-1 * var(--twisty-reach, 0px));
+							right: -${ROW_GAP}px;
+						}
+						.outline-twisty > * {
 							transition: transform 0.12s ease;
 						}
-						.outline-twisty.expanded {
+						.outline-twisty.expanded > * {
 							transform: rotate(90deg);
 						}
 						.outline-twisty:hover {
@@ -1821,6 +2048,8 @@ export class Plugin extends CollectionPlugin {
 				},
 
 				onDestroy: () => {
+					stopHintTimer();
+					if (viewFocused) plugin.showKeyHints(false);
 					detachScroller();
 					$topPad = $bottomPad = null;
 					closeMenu();
@@ -1839,9 +2068,15 @@ export class Plugin extends CollectionPlugin {
 				// selected row takes DOM focus then rather than on render.
 				onFocus: () => {
 					viewFocused = true;
+					syncKeyHints();
+					if (!hintTimer) hintTimer = setInterval(syncKeyHints, 300);
 					if (rows.length) setSelection(selectedIndex);
 				},
-				onBlur: () => { viewFocused = false; },
+				onBlur: () => {
+					viewFocused = false;
+					stopHintTimer();
+					plugin.showKeyHints(false);
+				},
 
 				onKeyboardNavigation: ({ e }) => {
 					// An open menu owns the keyboard; its own keydown drives it.
@@ -1921,14 +2156,14 @@ export class Plugin extends CollectionPlugin {
 					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 						e.preventDefault();
 						// A peek already put the record aside; keep that panel.
-						if (peekPanelId) commitPeek();
+						if (isPeeking()) commitPeek();
 						else openSelected(true);
 						return;
 					}
 
 					// While peeking, Escape exits and Enter commits — the same pair
 					// the app puts in the status bar during a peek.
-					if (peekPanelId && e.key === 'Escape') {
+					if (e.key === 'Escape' && isPeeking()) {
 						e.preventDefault();
 						hidePeek();
 						return;
@@ -1964,6 +2199,9 @@ export class Plugin extends CollectionPlugin {
 						} else if (current.parent) {
 							const up = rows.findIndex(r => r.node.id === current.parent.id);
 							if (up !== -1) setSelection(up);
+						} else if (selectedIndex === 0) {
+							// Same as plain ↑: the top row hands off to the search box.
+							focusAppSearch();
 						} else {
 							selectNext(-1);
 						}
@@ -2016,13 +2254,14 @@ export class Plugin extends CollectionPlugin {
 						case 'Enter':
 							e.preventDefault();
 							// Enter during a peek commits it: the side panel stays.
-							if (peekPanelId) commitPeek();
+							if (isPeeking()) commitPeek();
 							else openSelected(false);
 							break;
 					}
 				},
 			};
 		});
+		this.captureNativeView(viewId);
 	}
 
 }

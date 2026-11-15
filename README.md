@@ -131,10 +131,14 @@ Some parts of Thymer's plugin API that aren't open yet, so custom views can't mi
   writable from a plugin, so "Custom Order" isn't offered as a sort either.
 - No `Alt+Enter` (create above) — there's no positioned-create call.
 - No trash shortcut.
-- Committing a peek makes the side panel blink because the plugin has to close
-  and reopen the side panel to keep the back-button history tidy.
-- The status bar shows Thymer's default shortcuts, not this view's — a custom
-  view can add status bar items but can't replace the set.
+- Peek uses Thymer's own peek, reached through app internals rather than the
+  plugin SDK. If a Thymer update moves those, the view falls back to a
+  rebuilt peek, which makes the side panel blink when you commit after
+  arrowing through several records.
+- The status bar's shortcut hints are the view's own while it has focus, but
+  they're drawn over Thymer's (which are hidden), not a real replacement — a
+  Thymer update that renames its status bar classes would bring the defaults
+  back.
 - Sort resets when the view is rebuilt. Thymer's native views do the same;
   the sort you pick isn't written back to the view's config.
 
