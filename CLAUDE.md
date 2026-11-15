@@ -320,7 +320,29 @@ from up there and swallowed the breadcrumb's own Space. The handler now returns
 unless the focused element is inside the view root, or is `document.body` (the
 state the view sits in normally, where arrows still have to work).
 
-**Peek is rebuilt from panel calls.** Native peek is a panel navigation preview
+**Peek is native since 2026-11-15; everything below is the fallback.** The SDK
+plugin class *extends* the app's internal collection plugin (`Pk → gk → ro`
+in `app-RKJ3VAFR.js`), so `this.customViewHooks` is the Map
+`views.register()` writes into, and the app calls each entry with its
+internal records view (`xD extends zn`). `register()` drops that argument
+before our factory sees it, so `captureNativeView()` wraps the entry and
+parks the view in `plugin.pendingNativeView` for the factory, which runs
+synchronously inside it. The view's readable methods do the rest:
+`startRecordPreview(guid)` (peek, no history, focus untouched),
+`commitRecordPreview()`, `dismissRecordPreview()` (restores a borrowed
+panel), and `getPeekStatusBarContext()` (non-null exactly while peeking —
+`isPeeking()` uses it, so a peek dismissed from the side panel reads as gone).
+Only readable names are used; minified ones change between releases. If any
+is missing the view uses the SDK-only peek described below.
+
+The app does NOT show peek hints for a custom view: the status bar asks the
+focused component for its context via a minified method (`Ye()` in this
+build) that the custom-view host doesn't implement. So our key-hint strip
+switches to Esc/↵/↑↓ itself, polling `isPeeking()` every 300ms while focused.
+Overriding that minified method instead would let the app draw all our hints
+natively, but would break silently on the next release.
+
+**The SDK-only peek is rebuilt from panel calls.** Native peek is a panel navigation preview
 — `previewItemWithHighlight()`, `hasNavigationPreview()`,
 `dismissNavigationPreview()`, `commitNavigationPreview(true)` — all on the panel
 component, none of them on the SDK's `PluginPanel`. What it does here:

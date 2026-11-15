@@ -157,12 +157,17 @@ const KEYS_BODY_CLASS = 'plg-outline-keys';
  * markup (.statusbar-item > .statusbar--kbd + .statusbar--kbd-label, read off
  * the live status bar 2026-11-15) so they pick up its styling.
  */
-function keyHintsHtml() {
+function keyHintsHtml(peeking) {
 	const mac = /Mac|iPhone|iPad/.test(navigator.platform);
 	const mod = (sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`;
 	const cmd = mod('⌘', 'Ctrl');
 	const shift = mod('⇧', 'Shift');
-	return [
+	// While peeking, the set the app's own views show then (getPeekStatusBarContext).
+	const hints = peeking ? [
+		['Esc', 'Exit Peek'],
+		['↵', 'Open'],
+		['↑↓', 'Browse'],
+	] : [
 		['↑↓', 'Move'],
 		[`${cmd}↑↓`, 'Fold'],
 		[`${cmd}/`, 'Fold all'],
@@ -172,7 +177,8 @@ function keyHintsHtml() {
 		['E', 'Edit'],
 		[`${shift}↵`, 'New'],
 		['/', 'Search'],
-	].map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
+	];
+	return hints.map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
 }
 
 export class Plugin extends CollectionPlugin {
@@ -194,9 +200,10 @@ export class Plugin extends CollectionPlugin {
 	 * pinned over the left edge by CSS while the body class hides the app's
 	 * own hints there. One item per plugin, shared by every view instance.
 	 */
-	showKeyHints(on) {
+	showKeyHints(on, peeking = false) {
 		if (on && !this.keysItem) {
-			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml() });
+			this.keysPeeking = peeking;
+			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking) });
 			const $el = this.keysItem.getElement();
 			if ($el) {
 				$el.classList.add('outline-keys');
@@ -213,6 +220,10 @@ export class Plugin extends CollectionPlugin {
 					fit();
 				}
 			}
+		}
+		if (on && this.keysItem && this.keysPeeking !== peeking) {
+			this.keysPeeking = peeking;
+			this.keysItem.setHtmlLabel(keyHintsHtml(peeking));
 		}
 		document.body.classList.toggle(KEYS_BODY_CLASS, on);
 	}
@@ -235,10 +246,49 @@ export class Plugin extends CollectionPlugin {
 		for (const view of views) this.registerOn(view.id);
 	}
 
+	/**
+	 * Hand each view instance Thymer's own records-view object, for its native
+	 * peek. Not SDK: the SDK plugin class EXTENDS the app's internal collection
+	 * plugin, so `this.customViewHooks` is the very Map `views.register()`
+	 * writes into, and the app calls its entries with the internal view
+	 * (`customViewHooks.get(id)(view)`, read 2026-11-15). register() drops that
+	 * argument before calling our factory, so wrap the entry and park the view
+	 * where the factory, which runs synchronously inside it, can pick it up.
+	 * Missing or changed internals leave `pendingNativeView` unset, and the view
+	 * falls back to the SDK-only peek.
+	 */
+	captureNativeView(viewId) {
+		const hooks = this.customViewHooks;
+		const make = hooks instanceof Map ? hooks.get(viewId) : null;
+		if (typeof make !== 'function') return;
+		hooks.set(viewId, (view) => {
+			this.pendingNativeView = view;
+			try {
+				return make(view);
+			} finally {
+				this.pendingNativeView = null;
+			}
+		});
+	}
+
 	registerOn(viewId) {
 		this.views.register(viewId, (viewContext) => {
 			const ui = this.ui;
 			const plugin = this;
+			/**
+			 * The app's records-view object for this instance, when its native peek
+			 * is usable (see captureNativeView). Native peek previews in the side
+			 * panel without adding history and leaves focus here; Enter commits it
+			 * in place and Escape restores what the side panel showed before. None of
+			 * the SDK-only peek workarounds below run while this is set.
+			 */
+			const nativePeek = (() => {
+				const view = plugin.pendingNativeView;
+				const ok = view && ['startRecordPreview', 'commitRecordPreview',
+					'dismissRecordPreview', 'getPeekStatusBarContext']
+					.every(name => typeof view[name] === 'function');
+				return ok ? view : null;
+			})();
 			const collectionGuid = () => plugin.collection.getGuid();
 			// Per VIEW, not per collection: two Outline views over different
 			// properties are different trees, so a shared key would have
@@ -489,9 +539,8 @@ export class Plugin extends CollectionPlugin {
 				// runs on every render and on onFocus, and showPeek() itself takes focus
 				// back three times — re-peeking from here looped onFocus → showPeek
 				// without end, each pass queueing two more timed grabs, and froze the app.
-				if (peekPanelId) {
-					if (!peekPanel()) peekPanelId = null;
-					else if (rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) showPeek();
+				if (isPeeking() && rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) {
+					showPeek();
 				}
 			};
 
@@ -636,6 +685,40 @@ export class Plugin extends CollectionPlugin {
 				return true;
 			};
 
+			/**
+			 * Whether a peek is up. Native: the app's own test (its peek status-bar
+			 * context exists only while the panel previews), so a peek the user
+			 * dismissed from the side panel itself reads as gone. SDK-only: the
+			 * stored panel, dropped once the user has closed it.
+			 */
+			const isPeeking = () => {
+				if (nativePeek) {
+					try {
+						return !!nativePeek.getPeekStatusBarContext();
+					} catch (err) {
+						return false;
+					}
+				}
+				if (peekPanelId && !peekPanel()) peekPanelId = null;
+				return !!peekPanelId;
+			};
+
+			/**
+			 * The app shows peek hints only for its own views: the status bar asks
+			 * the focused component for them through a minified method, which the
+			 * custom-view host doesn't implement. So our strip switches to the peek
+			 * set itself. A peek can end from the side panel too, with no event this
+			 * view hears, so poll while focused — it's one cheap call.
+			 */
+			let hintTimer = null;
+			const syncKeyHints = () => {
+				if (viewFocused) plugin.showKeyHints(true, isPeeking());
+			};
+			const stopHintTimer = () => {
+				if (hintTimer) clearInterval(hintTimer);
+				hintTimer = null;
+			};
+
 			/** The peek panel, re-resolved each time — panel objects don't outlive much. */
 			const peekPanel = () => {
 				if (!peekPanelId) return null;
@@ -650,6 +733,10 @@ export class Plugin extends CollectionPlugin {
 			 * panel instead would throw away something the user had open.
 			 */
 			const hidePeek = () => {
+				if (nativePeek) {
+					if (isPeeking()) nativePeek.dismissRecordPreview();
+					return;
+				}
 				const panel = peekPanel();
 				const restore = peekRestoreNav;
 				peekPanelId = null;
@@ -678,6 +765,10 @@ export class Plugin extends CollectionPlugin {
 			 * the final record, which starts its history over.
 			 */
 			const commitPeek = () => {
+				if (nativePeek) {
+					nativePeek.commitRecordPreview();
+					return;
+				}
 				const current = rows[selectedIndex];
 				const panel = peekPanel();
 				const borrowed = !!peekRestoreNav;
@@ -716,6 +807,11 @@ export class Plugin extends CollectionPlugin {
 			const showPeek = () => {
 				const current = rows[selectedIndex];
 				if (!current) return;
+				if (nativePeek) {
+					peekedGuid = current.node.id;
+					nativePeek.startRecordPreview(current.node.id);
+					return;
+				}
 				const self = ownPanel();
 				const before = new Set(ui.getPanels().map(p => p.getId()));
 				// Read the panel the peek is about to take over BEFORE taking it over.
@@ -1952,6 +2048,7 @@ export class Plugin extends CollectionPlugin {
 				},
 
 				onDestroy: () => {
+					stopHintTimer();
 					if (viewFocused) plugin.showKeyHints(false);
 					detachScroller();
 					$topPad = $bottomPad = null;
@@ -1971,11 +2068,13 @@ export class Plugin extends CollectionPlugin {
 				// selected row takes DOM focus then rather than on render.
 				onFocus: () => {
 					viewFocused = true;
-					plugin.showKeyHints(true);
+					syncKeyHints();
+					if (!hintTimer) hintTimer = setInterval(syncKeyHints, 300);
 					if (rows.length) setSelection(selectedIndex);
 				},
 				onBlur: () => {
 					viewFocused = false;
+					stopHintTimer();
 					plugin.showKeyHints(false);
 				},
 
@@ -2057,14 +2156,14 @@ export class Plugin extends CollectionPlugin {
 					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 						e.preventDefault();
 						// A peek already put the record aside; keep that panel.
-						if (peekPanelId) commitPeek();
+						if (isPeeking()) commitPeek();
 						else openSelected(true);
 						return;
 					}
 
 					// While peeking, Escape exits and Enter commits — the same pair
 					// the app puts in the status bar during a peek.
-					if (peekPanelId && e.key === 'Escape') {
+					if (e.key === 'Escape' && isPeeking()) {
 						e.preventDefault();
 						hidePeek();
 						return;
@@ -2155,13 +2254,14 @@ export class Plugin extends CollectionPlugin {
 						case 'Enter':
 							e.preventDefault();
 							// Enter during a peek commits it: the side panel stays.
-							if (peekPanelId) commitPeek();
+							if (isPeeking()) commitPeek();
 							else openSelected(false);
 							break;
 					}
 				},
 			};
 		});
+		this.captureNativeView(viewId);
 	}
 
 }
