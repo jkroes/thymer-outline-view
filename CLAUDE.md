@@ -662,7 +662,16 @@ panel works, but then settings replaces the view. Community plugins only close
 panels from their own buttons, where they own the trigger. Hence: no settings
 navigation here at all.
 
-**The status bar can be added to, never replaced.** Native views own their
+**The status bar can be added to, never replaced** — so it is papered over.
+While a view has focus, `showKeyHints()` sets `body.plg-outline-keys`, which
+hides `.statusbar--left`'s children and shows one `addStatusBarItem()` item of
+ours (shared per plugin), absolutely positioned over the bar's left edge. Its
+label reuses the app's hint markup (`.statusbar-item > .statusbar--kbd +
+.statusbar--kbd-label`, read off the live bar 2026-11-15), so it picks up the
+app's styling. A ResizeObserver keeps its `right` at `.statusbar--right`'s
+width, and the label is a one-line wrapping flex box with `overflow: hidden`,
+so hints that don't fit drop out whole from the end. Background that still
+holds: Native views own their
 status bar: `qe()` returns a shortcut list plus `skipDefaultShortcuts: true`, so
 List advertises its own set (Search, Peek, Edit cell, Open Aside, Insert Row,
 Trash Row) *instead of* the app defaults, and swaps in a different set again

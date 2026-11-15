@@ -149,10 +149,72 @@ function hierarchyCandidates(fields, collectionGuid) {
 		&& (field.id === 'parent_page' || field.filter_colguid === collectionGuid));
 }
 
+/** Set on <body> while an Outline view has focus; swaps in the view's key hints. */
+const KEYS_BODY_CLASS = 'plg-outline-keys';
+
+/**
+ * The status-bar hints shown while an Outline view has focus, in the app's own
+ * markup (.statusbar-item > .statusbar--kbd + .statusbar--kbd-label, read off
+ * the live status bar 2026-11-15) so they pick up its styling.
+ */
+function keyHintsHtml() {
+	const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+	const mod = (sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`;
+	const cmd = mod('⌘', 'Ctrl');
+	const shift = mod('⇧', 'Shift');
+	return [
+		['↑↓', 'Move'],
+		[`${cmd}↑↓`, 'Fold'],
+		[`${cmd}/`, 'Fold all'],
+		['↵', 'Open'],
+		[`${cmd}↵`, 'Open aside'],
+		['Space', 'Peek'],
+		['E', 'Edit'],
+		[`${shift}↵`, 'New'],
+		['/', 'Search'],
+	].map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
+}
+
 export class Plugin extends CollectionPlugin {
 
 	onLoad() {
 		this.registerOutlineView();
+	}
+
+	onUnload() {
+		document.body.classList.remove(KEYS_BODY_CLASS);
+		if (this.keysObserver) this.keysObserver.disconnect();
+		if (this.keysItem) this.keysItem.remove();
+		this.keysItem = this.keysObserver = null;
+	}
+
+	/**
+	 * Show or hide the Outline key hints. A plugin can only APPEND status-bar
+	 * items (they land on the right), so the hints are one item of ours,
+	 * pinned over the left edge by CSS while the body class hides the app's
+	 * own hints there. One item per plugin, shared by every view instance.
+	 */
+	showKeyHints(on) {
+		if (on && !this.keysItem) {
+			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml() });
+			const $el = this.keysItem.getElement();
+			if ($el) {
+				$el.classList.add('outline-keys');
+				// Pinned items don't shrink with the window, so stop the strip
+				// where the right-hand items begin; hints that no longer fit wrap
+				// onto a clipped second line and drop out whole, from the end.
+				const $bar = $el.closest('.statusbar--status-bar');
+				const $right = $bar && $bar.querySelector('.statusbar--right');
+				if ($right) {
+					const fit = () => { $el.style.right = `${$right.offsetWidth + 10}px`; };
+					this.keysObserver = new ResizeObserver(fit);
+					this.keysObserver.observe($right);
+					this.keysObserver.observe($bar);
+					fit();
+				}
+			}
+		}
+		document.body.classList.toggle(KEYS_BODY_CLASS, on);
 	}
 
 	/**
@@ -1378,6 +1440,9 @@ export class Plugin extends CollectionPlugin {
 				const $twisty = document.createElement('span');
 				$twisty.className = 'outline-twisty';
 				if (hasChildren) {
+					// The click target reaches back over the indent to the row edge;
+					// see .outline-twisty::before.
+					$twisty.style.setProperty('--twisty-reach', `${indent}px`);
 					$twisty.appendChild(ui.createIcon('ti-chevron-right'));
 					$twisty.classList.toggle('expanded', isExpanded(node));
 					// On mouseup, not click: the row opens on mouseup, which fires
@@ -1559,6 +1624,36 @@ export class Plugin extends CollectionPlugin {
 							color: var(--cmdpal-selected-fg-color);
 						}
 						.outline-pad { flex: none; }
+						/*
+						 * Key hints: our status-bar item is pinned over the bar's left
+						 * edge while the app's own hints there are hidden. Absolute
+						 * against the bar escapes .statusbar--right's overflow clip.
+						 */
+						.outline-keys { display: none !important; }
+						body.${KEYS_BODY_CLASS} .statusbar--status-bar { position: relative; }
+						body.${KEYS_BODY_CLASS} .statusbar--left > * { display: none !important; }
+						body.${KEYS_BODY_CLASS} .outline-keys {
+							display: flex !important;
+							position: absolute;
+							left: 0;
+							top: 0;
+							bottom: 0;
+							align-items: center;
+							margin: 0;
+							padding: 0;
+							overflow: hidden;
+						}
+						.outline-keys .statusbar-item--icon { display: none; }
+						.outline-keys .statusbar-item--label {
+							display: flex;
+							flex-wrap: wrap;
+							align-items: center;
+							column-gap: 5px;
+							row-gap: 20px;
+							height: 19px;
+							overflow: hidden;
+							font-size: 12px;
+						}
 						.outline-list {
 							display: flex;
 							flex-direction: column;
@@ -1589,9 +1684,27 @@ export class Plugin extends CollectionPlugin {
 							flex: 0 0 16px;
 							color: var(--text-muted);
 							border-radius: 3px;
+							position: relative;
+						}
+						/*
+						 * The chevron alone is a 16px target beside a row that opens on
+						 * click, so misses zoom into the page. This invisible box widens
+						 * the target to the full row height, left across the indent to the
+						 * row edge, and right across the gap to the page icon. The
+						 * chevron rotates inside it, not the twisty, so the box stays put.
+						 */
+						.outline-twisty:not(:empty)::before {
+							content: "";
+							position: absolute;
+							top: -7px;
+							bottom: -7px;
+							left: calc(-1 * var(--twisty-reach, 0px));
+							right: -${ROW_GAP}px;
+						}
+						.outline-twisty > * {
 							transition: transform 0.12s ease;
 						}
-						.outline-twisty.expanded {
+						.outline-twisty.expanded > * {
 							transform: rotate(90deg);
 						}
 						.outline-twisty:hover {
@@ -1821,6 +1934,7 @@ export class Plugin extends CollectionPlugin {
 				},
 
 				onDestroy: () => {
+					if (viewFocused) plugin.showKeyHints(false);
 					detachScroller();
 					$topPad = $bottomPad = null;
 					closeMenu();
@@ -1839,9 +1953,13 @@ export class Plugin extends CollectionPlugin {
 				// selected row takes DOM focus then rather than on render.
 				onFocus: () => {
 					viewFocused = true;
+					plugin.showKeyHints(true);
 					if (rows.length) setSelection(selectedIndex);
 				},
-				onBlur: () => { viewFocused = false; },
+				onBlur: () => {
+					viewFocused = false;
+					plugin.showKeyHints(false);
+				},
 
 				onKeyboardNavigation: ({ e }) => {
 					// An open menu owns the keyboard; its own keydown drives it.
@@ -1964,6 +2082,9 @@ export class Plugin extends CollectionPlugin {
 						} else if (current.parent) {
 							const up = rows.findIndex(r => r.node.id === current.parent.id);
 							if (up !== -1) setSelection(up);
+						} else if (selectedIndex === 0) {
+							// Same as plain ↑: the top row hands off to the search box.
+							focusAppSearch();
 						} else {
 							selectNext(-1);
 						}
