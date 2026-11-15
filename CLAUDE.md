@@ -856,6 +856,16 @@ installs are still recognised and removable.
   to hold a cycle and so is a sub-page link written before this view existed.
 - Sibling order is whatever the app hands over, so the view's sort actually
   applies. Don't re-sort inside `buildHierarchy()`.
+- **Rows are windowed.** Only rows within `OVERSCAN_PX` of the viewport are in
+  the DOM, between two `.outline-pad` spacers sized from measured heights
+  (cached by guid; unmeasured rows use the first plain row's height). Building
+  every row on each render, toggle and refresh made a fully expanded
+  3,500-row collection (CDPR Legal Codes, 2026-11-15) crawl. Consequences:
+  anything that looks a row up by `data-guid`/`data-index` must call
+  `ensureRendered()` first (`setSelection()` does), `restack()` only sees
+  rendered rows, and a resize clears the height cache. The scroller is the
+  nearest `overflow-y: auto|scroll` ancestor, found lazily since the view may
+  not be attached on first render.
 
 ## Repo setup and publishing
 

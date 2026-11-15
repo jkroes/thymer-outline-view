@@ -169,6 +169,15 @@ var plugins = (() => {
         let peekedGuid = null;
         let propMode = null;
         let pendingNameEditGuid = null;
+        let win = { start: 0, end: 0 };
+        const heightCache = /* @__PURE__ */ new Map();
+        let rowEstimate = 30;
+        let $topPad = null;
+        let $bottomPad = null;
+        let scroller = null;
+        let scrollTarget = null;
+        let scrollRaf = 0;
+        let renderFields = [];
         const fieldsById = /* @__PURE__ */ __name(() => {
           const map = {};
           (plugin.getConfiguration().fields || []).forEach((f) => {
@@ -250,7 +259,9 @@ var plugins = (() => {
         const setSelection = /* @__PURE__ */ __name((index) => {
           selectedIndex = Math.max(0, Math.min(index, rows.length - 1));
           if (!$list) return;
-          $list.querySelectorAll(".outline-row").forEach(($row, i) => {
+          ensureRendered(selectedIndex);
+          $list.querySelectorAll(".outline-row").forEach(($row) => {
+            const i = Number($row.dataset.index);
             $row.classList.toggle("selected", i === selectedIndex);
             $row.tabIndex = i === selectedIndex ? 0 : -1;
           });
@@ -788,10 +799,122 @@ var plugins = (() => {
           }
           return $prop;
         }, "propChip");
+        const OVERSCAN_PX = 1e3;
+        const MARGIN_PX = 300;
+        const rowHeight = /* @__PURE__ */ __name((i) => heightCache.get(rows[i].node.id) ?? rowEstimate, "rowHeight");
+        const sumHeights = /* @__PURE__ */ __name((from, to) => {
+          let y = 0;
+          for (let i = from; i < to; i++) y += rowHeight(i);
+          return y;
+        }, "sumHeights");
+        const attachScroller = /* @__PURE__ */ __name(() => {
+          if (scroller && scroller.contains($list)) return;
+          detachScroller();
+          let found = null;
+          for (let el = $list.parentElement; el && el !== document.body; el = el.parentElement) {
+            const oy = getComputedStyle(el).overflowY;
+            if (oy === "auto" || oy === "scroll") {
+              found = el;
+              break;
+            }
+          }
+          if (!found && !$list.isConnected) return;
+          scroller = found || document.scrollingElement;
+          scrollTarget = found || window;
+          scrollTarget.addEventListener("scroll", onScroll, { passive: true });
+        }, "attachScroller");
+        const detachScroller = /* @__PURE__ */ __name(() => {
+          if (scrollTarget) scrollTarget.removeEventListener("scroll", onScroll);
+          if (scrollRaf) cancelAnimationFrame(scrollRaf);
+          scroller = scrollTarget = null;
+          scrollRaf = 0;
+        }, "detachScroller");
+        const onScroll = /* @__PURE__ */ __name(() => {
+          if (scrollRaf) return;
+          scrollRaf = requestAnimationFrame(() => {
+            scrollRaf = 0;
+            renderWindow(false);
+          });
+        }, "onScroll");
+        const viewportInList = /* @__PURE__ */ __name(() => {
+          const listTop = $list.getBoundingClientRect().top;
+          if (!scroller || scroller === document.scrollingElement) {
+            return { from: -listTop, to: window.innerHeight - listTop };
+          }
+          const top = scroller.getBoundingClientRect().top;
+          return { from: top - listTop, to: top - listTop + scroller.clientHeight };
+        }, "viewportInList");
+        const rangeFor = /* @__PURE__ */ __name((pad) => {
+          const { from, to } = viewportInList();
+          const lo = from - pad;
+          const hi = to + pad;
+          let y = 0;
+          let start = -1;
+          let end = rows.length;
+          for (let i = 0; i < rows.length; i++) {
+            if (y >= hi) {
+              end = i;
+              break;
+            }
+            const h = rowHeight(i);
+            if (start === -1 && y + h > lo) start = i;
+            y += h;
+          }
+          if (start === -1) start = Math.max(0, end - 1);
+          return { start, end };
+        }, "rangeFor");
+        const updatePads = /* @__PURE__ */ __name(() => {
+          $topPad.style.height = `${sumHeights(0, win.start)}px`;
+          $bottomPad.style.height = `${sumHeights(win.end, rows.length)}px`;
+        }, "updatePads");
+        const renderWindow = /* @__PURE__ */ __name((force, depth = 0) => {
+          if (!$list || !$topPad || !rows.length) return;
+          if (!force) {
+            const need = rangeFor(MARGIN_PX);
+            if (need.start >= win.start && need.end <= win.end) return;
+          }
+          win = rangeFor(OVERSCAN_PX);
+          while ($topPad.nextSibling && $topPad.nextSibling !== $bottomPad) {
+            $topPad.nextSibling.remove();
+          }
+          const $frag = document.createDocumentFragment();
+          for (let i = win.start; i < win.end; i++) $frag.appendChild(buildRow(i));
+          $list.insertBefore($frag, $bottomPad);
+          restack();
+          let changed = false;
+          let estimated = heightCache.size > 0;
+          for (let $r = $topPad.nextSibling; $r && $r !== $bottomPad; $r = $r.nextSibling) {
+            const h = $r.offsetHeight;
+            if (!h) continue;
+            if (!estimated && !$r.classList.contains("is-stacked") && !$r.querySelector(".outline-propedit")) {
+              estimated = true;
+              rowEstimate = h;
+            }
+            if (heightCache.get($r.dataset.guid) !== h) {
+              heightCache.set($r.dataset.guid, h);
+              changed = true;
+            }
+          }
+          updatePads();
+          if (changed && depth < 2) renderWindow(false, depth + 1);
+        }, "renderWindow");
+        const ensureRendered = /* @__PURE__ */ __name((index) => {
+          if (!$topPad || !rows.length || index >= win.start && index < win.end) return;
+          if (scroller) {
+            const { from, to } = viewportInList();
+            const top = sumHeights(0, index);
+            const bottom = top + rowHeight(index);
+            if (top < from) scroller.scrollTop -= from - top;
+            else if (bottom > to) scroller.scrollTop += bottom - to;
+          }
+          renderWindow(true);
+        }, "ensureRendered");
         const renderRows = /* @__PURE__ */ __name(() => {
           if (!$list) return;
-          const fields = visibleFields();
+          renderFields = visibleFields();
           $list.innerHTML = "";
+          $topPad = $bottomPad = null;
+          win = { start: 0, end: 0 };
           rows = hierarchy ? flatten() : [];
           if (rows.length === 0) {
             const $empty = document.createElement("div");
@@ -800,78 +923,19 @@ var plugins = (() => {
             $list.appendChild($empty);
             return;
           }
-          rows.forEach(({ node, depth }, index) => {
-            const hasChildren = node.children.length > 0;
-            const indent = ROW_PAD_X + depth * DEPTH_STEP;
-            const $row = document.createElement("div");
-            $row.className = "outline-row";
-            if (contextGuids.has(node.id)) $row.classList.add("is-context");
-            $row.dataset.index = String(index);
-            $row.tabIndex = index === selectedIndex ? 0 : -1;
-            $row.dataset.guid = node.id;
-            $row.dataset.indent = String(indent);
-            const $title = document.createElement("div");
-            $title.className = "outline-title";
-            $title.style.paddingLeft = `${indent}px`;
-            const $twisty = document.createElement("span");
-            $twisty.className = "outline-twisty";
-            if (hasChildren) {
-              $twisty.appendChild(ui.createIcon("ti-chevron-right"));
-              $twisty.classList.toggle("expanded", isExpanded(node));
-              $twisty.addEventListener("mouseup", (e) => {
-                if (e.button !== 0) return;
-                e.stopPropagation();
-                e.preventDefault();
-                toggle(node);
-              });
-            }
-            $title.appendChild($twisty);
-            const $icon = ui.createIcon(node.record.getIcon(true) || "ti-file");
-            $icon.classList.add("outline-icon");
-            $title.appendChild($icon);
-            const $name = document.createElement("span");
-            $name.className = "outline-name";
-            $name.textContent = node.name;
-            $title.appendChild($name);
-            if (hasChildren && !isExpanded(node)) {
-              const $count = document.createElement("span");
-              $count.className = "outline-count";
-              $count.textContent = String(node.children.length);
-              $title.appendChild($count);
-            }
-            const chips = fields.map((field) => ({ field, value: propValue(node.record, field) })).filter((entry) => entry.value);
-            if (chips.length) {
-              const $props = document.createElement("span");
-              $props.className = "outline-props";
-              chips.forEach(({ field, value }) => $props.appendChild(propChip(field, value)));
-              $title.appendChild($props);
-            }
-            const $time = document.createElement("span");
-            $time.className = "outline-time";
-            $time.textContent = timeAgo(node.record.date("Modified"));
-            $title.appendChild($time);
-            $row.appendChild($title);
-            if (propMode && propMode.guid === node.id) {
-              $row.appendChild(buildPropEditor(node, indent));
-            }
-            $row.addEventListener("mouseup", (e) => {
-              if (e.button !== 0 && e.button !== 1) return;
-              hidePeek();
-              setSelection(index);
-              if (e.button === 0 && e.shiftKey) {
-                e.preventDefault();
-                return;
-              }
-              if (e.button === 1 || e.metaKey || e.ctrlKey) {
-                viewContext.openRecordInOtherPanel(node.id);
-              } else {
-                viewContext.openRecordInThisPanel(node.id);
-              }
-              e.preventDefault();
+          $topPad = document.createElement("div");
+          $bottomPad = document.createElement("div");
+          $topPad.className = $bottomPad.className = "outline-pad";
+          $list.append($topPad, $bottomPad);
+          attachScroller();
+          renderWindow(true);
+          if (!scroller) {
+            requestAnimationFrame(() => {
+              if (!$list) return;
+              attachScroller();
+              renderWindow(false);
             });
-            $list.appendChild($row);
-          });
-          restack();
+          }
           setSelection(selectedIndex);
           if (pendingNameEditGuid) {
             const at = rows.findIndex((r) => r.node.id === pendingNameEditGuid);
@@ -882,6 +946,80 @@ var plugins = (() => {
             }
           }
         }, "renderRows");
+        const buildRow = /* @__PURE__ */ __name((index) => {
+          const { node, depth } = rows[index];
+          const fields = renderFields;
+          const hasChildren = node.children.length > 0;
+          const indent = ROW_PAD_X + depth * DEPTH_STEP;
+          const $row = document.createElement("div");
+          $row.className = "outline-row";
+          if (contextGuids.has(node.id)) $row.classList.add("is-context");
+          $row.dataset.index = String(index);
+          $row.tabIndex = index === selectedIndex ? 0 : -1;
+          if (index === selectedIndex) $row.classList.add("selected");
+          $row.dataset.guid = node.id;
+          $row.dataset.indent = String(indent);
+          const $title = document.createElement("div");
+          $title.className = "outline-title";
+          $title.style.paddingLeft = `${indent}px`;
+          const $twisty = document.createElement("span");
+          $twisty.className = "outline-twisty";
+          if (hasChildren) {
+            $twisty.appendChild(ui.createIcon("ti-chevron-right"));
+            $twisty.classList.toggle("expanded", isExpanded(node));
+            $twisty.addEventListener("mouseup", (e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              e.preventDefault();
+              toggle(node);
+            });
+          }
+          $title.appendChild($twisty);
+          const $icon = ui.createIcon(node.record.getIcon(true) || "ti-file");
+          $icon.classList.add("outline-icon");
+          $title.appendChild($icon);
+          const $name = document.createElement("span");
+          $name.className = "outline-name";
+          $name.textContent = node.name;
+          $title.appendChild($name);
+          if (hasChildren && !isExpanded(node)) {
+            const $count = document.createElement("span");
+            $count.className = "outline-count";
+            $count.textContent = String(node.children.length);
+            $title.appendChild($count);
+          }
+          const chips = fields.map((field) => ({ field, value: propValue(node.record, field) })).filter((entry) => entry.value);
+          if (chips.length) {
+            const $props = document.createElement("span");
+            $props.className = "outline-props";
+            chips.forEach(({ field, value }) => $props.appendChild(propChip(field, value)));
+            $title.appendChild($props);
+          }
+          const $time = document.createElement("span");
+          $time.className = "outline-time";
+          $time.textContent = timeAgo(node.record.date("Modified"));
+          $title.appendChild($time);
+          $row.appendChild($title);
+          if (propMode && propMode.guid === node.id) {
+            $row.appendChild(buildPropEditor(node, indent));
+          }
+          $row.addEventListener("mouseup", (e) => {
+            if (e.button !== 0 && e.button !== 1) return;
+            hidePeek();
+            setSelection(index);
+            if (e.button === 0 && e.shiftKey) {
+              e.preventDefault();
+              return;
+            }
+            if (e.button === 1 || e.metaKey || e.ctrlKey) {
+              viewContext.openRecordInOtherPanel(node.id);
+            } else {
+              viewContext.openRecordInThisPanel(node.id);
+            }
+            e.preventDefault();
+          });
+          return $row;
+        }, "buildRow");
         const mount = /* @__PURE__ */ __name(() => {
           const $element = viewContext.getElement();
           $element.innerHTML = "";
@@ -978,6 +1116,7 @@ var plugins = (() => {
 							background: var(--cmdpal-selected-bg-color);
 							color: var(--cmdpal-selected-fg-color);
 						}
+						.outline-pad { flex: none; }
 						.outline-list {
 							display: flex;
 							flex-direction: column;
@@ -1226,8 +1365,15 @@ var plugins = (() => {
             renderOrphanNote();
             renderRows();
           }, "onRefresh"),
-          onPanelResize: /* @__PURE__ */ __name(() => restack(), "onPanelResize"),
+          // Width decides which rows stack onto two lines, so every measured
+          // height is suspect after a resize.
+          onPanelResize: /* @__PURE__ */ __name(() => {
+            heightCache.clear();
+            renderWindow(true);
+          }, "onPanelResize"),
           onDestroy: /* @__PURE__ */ __name(() => {
+            detachScroller();
+            $topPad = $bottomPad = null;
             closeMenu();
             hidePeek();
             propMode = null;
