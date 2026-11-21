@@ -1,156 +1,175 @@
-# Outline view for Thymer
+# Outline view
 
-A collection view that shows your records as an indented, collapsible tree instead of a flat list, modeled on Thymer's List view. It works on any collection with a property that references itself. 
-
-## Features
-
-- **A real tree.** Indented rows, one toggle per parent, collapse state remembered
-  per device.
-- **Search that keeps its place.** Thymer's own search box narrows the view to the
-  matches alone, which would leave the tree flat and unfoldable. This puts each
-  match's parents back, so you can still see where in the tree a hit lives, and
-  still fold the branches while the search is on. Those parents are faded, so
-  the matches themselves stay easy to pick out; point at one, or select it, and
-  it comes back to full strength.
-- **Row properties.** Whichever properties the view is set to show
-  appear as chips — choices as colored pills, links as clickable chips. Chips
-  line up in a right-hand column, and wrap to a second line when space is limited.
-- **So many shortcuts.** You'll forget this isn't a built-in view. See [Keys](#keys).
+An **Outline** view for [Thymer](https://thymer.com) collections: your records as an
+indented, collapsible tree instead of a flat list, with the look and keys of Thymer's
+own List view. It works on any collection that nests, either with sub-pages or with a
+property that links back to the same collection. Your records and properties stay
+exactly as they are; the view only changes how they're shown, and writes only when you
+edit something from it.
 
 ## Install
 
-Two ways: a global plugin that does it for you, or three steps by hand.
+The easy way is the installer, a small global plugin that sets the view up in any
+collection for you.
 
-### With the installer
+1. In Thymer, open the command palette (⌘P), choose **Plugins → Create Plugin**.
+2. Open **Edit Code → Custom Code**, paste the contents of
+   [`installer/dist/plugin.js`](installer/dist/plugin.js), and save.
+3. Open ⌘P → **Outline: install into a collection…**. A panel lists your collections,
+   each with a line saying where it stands and a button saying what it will do:
 
-`installer/dist/plugin.js` is a global plugin that sets up any collection for
-you. Install it once:
-
-1. Create a global plugin in Thymer's Plugins screen, named whatever you like.
-2. Paste in the whole of [`installer/dist/plugin.js`](installer/dist/plugin.js)
-   and save.
-
-Then run **"Outline: install into a collection..."** from the command palette. A
-panel lists your collections, each with a line saying where it stands — whether
-it can nest, whether it has a Custom view, whether its plugin slot is free — and
-a button that says what it will do:
-
-| Button | Meaning |
+| Button | What it does |
 |---|---|
-| Install | Nothing is set up yet. Turns on sub-pages if the collection has no way to nest, adds one Outline view per nesting property, writes the view code. |
-| Repair | The views are there but something is out of step — a property with no view, or a view whose property was deleted. Fixes just that, and leaves each view's name, shown properties and sort alone. |
-| Update | An older build of the view is installed. Overwrites just the code. |
-| Remove | Takes out the Outline views and clears the code. Leaves custom views you made yourself, and never touches sub-pages or your nesting — those hold real data. |
+| Install | Turns on sub-pages if the collection has no way to nest, adds an Outline view, and writes the view's code. |
+| Repair | Brings the views back in step with your properties (see [one view per property](#one-view-per-nesting-property)). Leaves each view's name, columns and sort alone. |
+| Update | Replaces an older version of the view's code. |
+| Remove | Takes the Outline views and their code out again. |
 
-The line above the button says what Install would change, so you can see which
-views it would add or remove before pressing it.
+The installer never overwrites code it didn't write. Thymer gives each collection one
+plugin, so a collection that already has code of its own (formulas, a custom record
+title) is flagged, and Install opens the code editor with the view loaded so you can
+merge the two yourself. Nothing is saved until you save.
 
-A collection that is complete and up to date shows "Installed" and offers only
-Remove.
+**By hand** instead: turn on sub-pages in the collection's settings, add a view of type
+**Custom** (any name), then paste [`dist/plugin.js`](dist/plugin.js) into the
+collection's plugin code and save.
 
-**If a collection already has plugin code of its own**, the installer will not
-overwrite it. Thymer gives each collection a single plugin, and writing code
-replaces whatever is there — so a collection with formulas or a custom record
-title would lose them. Those are flagged in the panel, and installing opens the
-code editor with the view's source loaded so you can merge it yourself. Nothing
-is written until you save.
+Other devices pick the view up after a reload (⌘R).
 
-The view's source is baked into the installer when it's built, so installing
-doesn't fetch anything from the internet.
+## What's different from the native List view
 
-### By hand
+### Records nest under their parents
 
-1. **Give the collection a way to nest.** Turn on sub-pages, which adds a
-   "Sub-page of" property. A record-link property you made yourself that points
-   back at the same collection works too.
-2. **Add a Custom view.** In the collection's settings, add a view of type
-   Custom and name it whatever you like.
-3. **Paste in the code.** Open the collection's plugin code editor, paste the
-   whole of [`plugin.js`](plugin.js), save.
+Each record sits under its parent, with a toggle to fold or unfold its children.
+Records with no parent are the top level. Folds are remembered on each device, and
+**⌘/** folds or unfolds the whole tree at once.
 
-Open the view's tab and the tree renders. Nothing to configure — the plugin
-claims whatever Custom views the collection has, so the view's name and id are
-yours to change freely.
+### Search shows where each match lives
 
-### Either way
+Thymer's search box works as usual, but instead of a flat list of hits you see each
+match in its place in the tree, with the path down to it. Pages whose **names** match
+are at full strength; the parents leading to them are faded, so the matches stand out.
+The tree opens down to the deepest match and stops there. A matching page's own
+children stay folded until you open them.
 
-The tree comes from a record-link property pointing back at the same collection
-— "Sub-page of", or one you made. A property qualifies only if it holds **one**
-link: several links would give a record several parents, which is not a tree.
-One pointing at another collection groups records rather than nesting them.
+<img src="docs/search.png" alt="Searching &quot;department&quot;: pages with Department in their names at full strength, their parent pages faded, matches with children of their own left folded" width="700">
 
-**Each such property is its own hierarchy**, and Install gives you one view per
-property — a sub-page tree and a "Reports to" tree side by side, switched with
-the view tabs. Every view keeps its own name, columns, sort and collapsed rows,
-and remembers which property it draws. A Custom view you add by hand has no
-property assigned, so it uses "Sub-page of", or the first that qualifies.
+Folding and unfolding while you search is temporary: clear the search and the tree is
+folded the way you left it.
 
-The sub-page view is called **Outline**, every other one **Outline: `<property>`**.
-Rename a property and Install updates that name, unless you named the view
-yourself.
+### Zoom into a branch
 
-**The property is what a view is made from.** Install re-creates a view you
-deleted, because the property is still there; delete the property to be rid of
-the view. Until you re-run it, an orphaned view lists everything flat and says
-so above the rows.
+Press **Z** to show only the selected record and everything under it. A bar above the
+rows shows the path to it; click any step to zoom there, or **All** for the whole
+collection. **⇧Z** steps out one level. While zoomed, search looks only inside the
+branch, at any depth.
 
-Turning sub-pages off removes "Sub-page of", so that view loses its hierarchy.
-The links survive — turn sub-pages back on and every parent returns.
+### Properties on the row
 
-## Keys
+The properties you choose in the view's settings appear on each row: choices as colored
+pills, links as chips you can click to open. They line up in a column at the right and
+move to a second line when the name needs the room.
+
+### Edit fields without opening the record
+
+Press **E** and the selected record's fields open in a list underneath it: the title,
+the properties shown on the row, then every other editable field. **↑ / ↓** pick one,
+**Enter** edits it, **Escape** or **E** closes the list. Text and numbers get a small
+input; choices and links get a filter menu.
+
+That includes the parent field, so you can move a whole branch somewhere else without
+leaving the outline. The menu leaves out the record's own descendants, so you can't
+create a loop.
+
+### Peek while you browse
+
+**Space** shows the selected record in the side panel, and the side panel follows as you
+arrow up and down, so you can read through a branch without opening anything. **Enter**
+keeps the page open; **Escape** closes the peek. If you already had something open in
+the side panel, the peek borrows it and puts it back afterwards.
+
+### New pages are named in place
+
+**⇧Enter**, or the **New …** card at the bottom, adds a row and puts the cursor in its
+name, rather than taking you to a new page. Leave the name empty and the page goes to
+the trash.
+
+### Keys
+
+Most keys are the List view's own. The differences:
 
 | Key | Action |
 |---|---|
-| `↑` `↓` | Move between rows. `↓` wraps at the last row; `↑` stops at the first and hands focus up to the search box, then the view tabs, then the page title. |
-| `←` `→` | Cycle through rows. |
-| `⌘↑` `⌘↓` | Collapse or expand the focused node. When there is nothing to open, `⌘↓` moves to the next row. When there is nothing to close, `⌘↑` climbs to the parent, or moves to the previous row if the node is already a root. |
-| `⌘/` | Collapse or expand the whole tree: collapses everything if anything is open, expands everything otherwise. |
-| `Tab` | Move to the next row, wrapping at the end. Tab out of the search box lands on the row you left. `Shift+Tab` is left to the browser, as it is in Thymer's own list view. |
-| `Home` `End` | Go to the first or last row. |
-| `Enter` | Open the focused record in this panel. |
-| `⌘Enter` | Open the focused record in the side panel. |
-| `Shift+Enter` | Create a record and open its name for typing in place, rather than navigating to a new page. Leave it unnamed and it goes to the trash, recoverable like any other trashed record. |
-| `Space` | Peek the focused record in the side panel. The peek follows the selection as you arrow, so you can walk a branch without opening anything. A side panel you already had open is borrowed, then put back on what it was showing. `Enter` or `⌘Enter` commits the peek to a real open. `Escape` dismisses it. |
-| `E` | **Property mode.** The focused record's fields open as a list underneath it: Title, then the properties shown on the row, then every other editable field. Text, number, choice and record-link fields can all be edited, including the one the tree is built from, so you can move a whole branch without opening the record. That field's menu leaves out the row's own descendants, so you cannot create a loop. `↑` `↓` move between fields. `Enter` edits the highlighted field, as an inline box for text and number or as a filter menu for choice and record link. `Escape` or `E` leaves. |
-| `/` | Focus the search box. |
-| Click | Open the record. `⌘`-click or middle-click opens it in the side panel. `Shift`-click focuses the row without opening it. |
+| `↑` `↓` | Move between rows. `↑` from the top row goes up to the search box, as in List. |
+| `←` `→` | Also move between rows, wrapping at either end. |
+| `⌘↑` `⌘↓` | Fold or unfold the selected row. On a row with nothing to fold, `⌘↑` jumps to its parent. |
+| `⌘/` | Fold or unfold the whole tree. |
+| `Z` / `⇧Z` | Zoom into the selected record / step back out. |
+| `E` | Edit the selected record's fields (above). |
+| `Space` | Peek (above). |
 
-## Known limits
+The rest work as in List: `Enter` opens, `⌘Enter` opens in the side panel, `Home` /
+`End`, `Tab`, `/` for the search box, click, `⌘`-click and `⇧`-click, and the `⋯` menu
+on a hovered row.
 
-A hierarchy assumes each record has a single parent, so it can't model something
-like familial parents, where each person has two. A property holding several
-links is skipped rather than drawn wrong.
+While the outline has focus, the status bar at the bottom of the window lists these
+keys in place of Thymer's usual hints: move, fold, open, peek, edit, new, zoom
+(and zoom out while zoomed), search. During a peek it switches to the peek keys,
+**Esc** Exit Peek, **↵** Open, **↑↓** Browse, as Thymer's own views do. Hints that
+don't fit the window's width are left off the end.
 
-Some parts of Thymer's plugin API that aren't open yet, so custom views can't mimic or alter every feature available to built-in views:
+A few List features have no counterpart, because Thymer doesn't let plugins do them
+yet: dragging rows, move mode (`M`), **Custom Order** sorting, `⌥Enter` (new page
+above), and the trash shortcut. The sort you pick resets when you leave the view, as it
+does for every custom view.
 
-- Every Custom view in the collection becomes an outline. That is what frees you
-  from naming the view or minding its id, but it means a collection running this
-  can't also have a Custom view doing something else — a collection has only one
-  plugin, so there is nothing else for those views to be.
-- No drag-to-reorder and no move mode (`M`). The per-view custom order isn't
-  writable from a plugin, so "Custom Order" isn't offered as a sort either.
-- No `Alt+Enter` (create above) — there's no positioned-create call.
-- No trash shortcut.
-- Peek uses Thymer's own peek, reached through app internals rather than the
-  plugin SDK. If a Thymer update moves those, the view falls back to a
-  rebuilt peek, which makes the side panel blink when you commit after
-  arrowing through several records.
-- The status bar's shortcut hints are the view's own while it has focus, but
-  they're drawn over Thymer's (which are hidden), not a real replacement — a
-  Thymer update that renames its status bar classes would bring the defaults
-  back.
-- Sort resets when the view is rebuilt. Thymer's native views do the same;
-  the sort you pick isn't written back to the view's config.
+### One view per nesting property
 
-## Contributing / hacking
+A collection can nest in more than one way: sub-pages, and say a "Reports to" property
+linking to the same collection. Each is its own tree, and Install gives each its own
+view, side by side in the view tabs. The sub-page view is called **Outline**, the others
+**Outline: Reports to** and so on, and each keeps its own columns, sort and folds.
 
-`CLAUDE.md` in this repo is the implementation write-up: how the tree is built,
-what the built-in list view does key-for-key and where this deviates, what
-sub-pages actually are underneath, and a long list of app behavior that isn't in
-the SDK docs (most of it read out of the shipped bundle). Read it before
-changing anything — a fair amount of this code looks arbitrary until you know
-what it's working around.
+Only a property that holds **one** link qualifies. Several links would give a record
+several parents, which isn't a tree.
+
+The property decides whether its view exists: Repair brings back a view you deleted, and
+removes a view whose property you deleted. If a view's property is gone before you run
+Repair, the view lists its records flat and says why above the rows.
+
+## Turning it off
+
+Run **Outline: install into a collection…** and press **Remove**, or delete the Outline
+view and the collection's plugin code yourself. Your records, sub-pages and parent links
+are untouched; turning sub-pages back on later (if you turned them off) brings every
+parent back. Remove leaves alone any Custom views you made yourself.
+
+## How it works (for the curious)
+
+1. **Thymer hands the view its records.** A Custom view receives the collection's
+   records already sorted and filtered by Thymer's own toolbar, so sort, filters and
+   search are Thymer's. The view draws the tree from that list.
+2. **It follows each record's parent link** to place it under its parent. A record
+   whose parent isn't in the list becomes a top-level row, and records caught in a loop
+   of parents are shown at the top level rather than disappearing.
+3. **It puts search results back in context.** Thymer's search returns the matching
+   pages without their parents, and also returns pages *under* a match. The view walks
+   up from each result to restore the path, then checks each name against your search
+   words to decide which rows are real matches and which are context.
+4. **It uses Thymer's own pieces where it can reach them:** the toolbar and search box,
+   the record options menu, and Thymer's peek. Peek isn't officially open to plugins, so
+   the view checks for it first and falls back to a peek of its own built from the side
+   panel (which blinks briefly when you keep a page you arrowed to). Plugins can add to
+   the status bar but not change what's there, so the view's key hints are drawn over
+   Thymer's, which are hidden only while the outline has focus.
+5. **It draws only what's on screen.** Rows outside the visible area aren't built until
+   you scroll to them, so a collection with thousands of records stays quick.
+6. **Each view remembers its property** in the view's own settings, which is why it
+   syncs and survives renaming the view.
+
+[`CLAUDE.md`](CLAUDE.md) has the full implementation notes, including the Thymer
+behavior this relies on that isn't in the plugin docs. Read it before changing the code.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

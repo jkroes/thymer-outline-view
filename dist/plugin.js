@@ -120,7 +120,7 @@ var plugins = (() => {
   }
   __name(hierarchyCandidates, "hierarchyCandidates");
   var KEYS_BODY_CLASS = "plg-outline-keys";
-  function keyHintsHtml(peeking) {
+  function keyHintsHtml(peeking, zoomed) {
     const mac = /Mac|iPhone|iPad/.test(navigator.platform);
     const mod = /* @__PURE__ */ __name((sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`, "mod");
     const cmd = mod("\u2318", "Ctrl");
@@ -138,6 +138,8 @@ var plugins = (() => {
       ["Space", "Peek"],
       ["E", "Edit"],
       [`${shift}\u21B5`, "New"],
+      ["Z", "Zoom"],
+      ...zoomed ? [[`${shift}Z`, "Zoom out"]] : [],
       ["/", "Search"]
     ];
     return hints.map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join("");
@@ -162,10 +164,11 @@ var plugins = (() => {
      * pinned over the left edge by CSS while the body class hides the app's
      * own hints there. One item per plugin, shared by every view instance.
      */
-    showKeyHints(on, peeking = false) {
+    showKeyHints(on, peeking = false, zoomed = false) {
+      const state = `${peeking}|${zoomed}`;
       if (on && !this.keysItem) {
-        this.keysPeeking = peeking;
-        this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking) });
+        this.keysState = state;
+        this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking, zoomed) });
         const $el = this.keysItem.getElement();
         if ($el) {
           $el.classList.add("outline-keys");
@@ -182,9 +185,9 @@ var plugins = (() => {
           }
         }
       }
-      if (on && this.keysItem && this.keysPeeking !== peeking) {
-        this.keysPeeking = peeking;
-        this.keysItem.setHtmlLabel(keyHintsHtml(peeking));
+      if (on && this.keysItem && this.keysState !== state) {
+        this.keysState = state;
+        this.keysItem.setHtmlLabel(keyHintsHtml(peeking, zoomed));
       }
       document.body.classList.toggle(KEYS_BODY_CLASS, on);
     }
@@ -242,6 +245,7 @@ var plugins = (() => {
           ].every((name) => typeof view[name] === "function");
           return ok ? view : null;
         })();
+        const canShowOptions = /* @__PURE__ */ __name(() => !!nativePeek && typeof nativePeek.showOptionsDropdown === "function", "canShowOptions");
         const collectionGuid = /* @__PURE__ */ __name(() => plugin.collection.getGuid(), "collectionGuid");
         const storageKey = `outline-collapsed:${this.getConfiguration().name}:${viewId}`;
         let collapsed = /* @__PURE__ */ new Set();
@@ -250,10 +254,14 @@ var plugins = (() => {
         } catch (err) {
           collapsed = /* @__PURE__ */ new Set();
         }
-        let forceExpanded = /* @__PURE__ */ new Set();
+        let searchOpen = null;
+        let searchKey = null;
         let contextGuids = /* @__PURE__ */ new Set();
         let viewFocused = false;
         let hierarchy = null;
+        let zoomGuid = null;
+        let lastRecords = null;
+        let $zoom = null;
         let rows = [];
         let selectedIndex = 0;
         let $root = null;
@@ -310,7 +318,7 @@ var plugins = (() => {
           const nav = panel.getNavigation();
           return nav && nav.type === "overview" && nav.rootId === collectionGuid();
         }) || null, "ownPanel");
-        const isExpanded = /* @__PURE__ */ __name((node) => !collapsed.has(node.id) || forceExpanded.has(node.id), "isExpanded");
+        const isExpanded = /* @__PURE__ */ __name((node) => searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id), "isExpanded");
         const visibleFields = /* @__PURE__ */ __name(() => {
           const byId = fieldsById();
           return viewContext.getVisiblePropertyIds().map((id) => byId[id]).filter((field) => field && field.id !== "title" && field.type !== "datetime" && field.type !== "banner");
@@ -332,16 +340,28 @@ var plugins = (() => {
           const text = record.text(field.id);
           return text ? { text } : null;
         }, "propValue");
-        const computeForceExpanded = /* @__PURE__ */ __name((contextGuids2) => {
-          forceExpanded = /* @__PURE__ */ new Set();
-          if (!hierarchy || !contextGuids2.size) return;
+        const openToMatches = /* @__PURE__ */ __name((matches) => {
+          const open = /* @__PURE__ */ new Set();
           const visit = /* @__PURE__ */ __name((node) => {
             const hasMatchBelow = node.children.map(visit).some(Boolean);
-            if (hasMatchBelow) forceExpanded.add(node.id);
-            return hasMatchBelow || !contextGuids2.has(node.id);
+            if (hasMatchBelow) open.add(node.id);
+            return hasMatchBelow || matches.has(node.id);
           }, "visit");
           hierarchy.rootNodes.forEach(visit);
-        }, "computeForceExpanded");
+          return open;
+        }, "openToMatches");
+        const findMatches = /* @__PURE__ */ __name((delivered) => {
+          const $input = appSearchInput();
+          const words = ($input ? $input.value : "").toLowerCase().split(/\s+/).filter(Boolean);
+          if (words.length) {
+            const hits = delivered.filter((r) => {
+              const name = (r.getName() || "").toLowerCase();
+              return words.every((w) => name.includes(w));
+            });
+            if (hits.length) return { matches: new Set(hits.map((r) => r.guid)), query: words.join(" ") };
+          }
+          return { matches: new Set(delivered.map((r) => r.guid)), query: words.join(" ") };
+        }, "findMatches");
         const flatten = /* @__PURE__ */ __name(() => {
           const out = [];
           const visit = /* @__PURE__ */ __name((node, depth, parent) => {
@@ -358,29 +378,23 @@ var plugins = (() => {
           if (!$list) return;
           ensureRendered(selectedIndex);
           $list.querySelectorAll(".outline-row").forEach(($row) => {
-            const i = Number($row.dataset.index);
-            $row.classList.toggle("selected", i === selectedIndex);
-            $row.tabIndex = i === selectedIndex ? 0 : -1;
+            $row.classList.toggle("selected", Number($row.dataset.index) === selectedIndex);
           });
           const $selected = $list.querySelector(`.outline-row[data-index="${selectedIndex}"]`);
-          if ($selected) {
-            $selected.scrollIntoView({ block: "nearest" });
-            if ((viewFocused || $root.contains(document.activeElement)) && document.activeElement !== appSearchInput()) {
-              $selected.focus({ preventScroll: true });
-            }
-          }
+          if ($selected) $selected.scrollIntoView({ block: "nearest" });
           if (isPeeking() && rows[selectedIndex] && rows[selectedIndex].node.id !== peekedGuid) {
             showPeek();
           }
         }, "setSelection");
         const toggle = /* @__PURE__ */ __name((node) => {
-          if (isExpanded(node)) {
-            collapsed.add(node.id);
-            forceExpanded.delete(node.id);
+          if (searchOpen) {
+            if (searchOpen.has(node.id)) searchOpen.delete(node.id);
+            else searchOpen.add(node.id);
           } else {
-            collapsed.delete(node.id);
+            if (isExpanded(node)) collapsed.add(node.id);
+            else collapsed.delete(node.id);
+            localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
           }
-          localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
           const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
           renderRows();
           const restored = rows.findIndex((r) => r.node.id === keepGuid);
@@ -394,15 +408,13 @@ var plugins = (() => {
           }, "visit");
           hierarchy.rootNodes.forEach(visit);
           if (!expandable.length) return;
-          if (expandable.some(isExpanded)) {
-            expandable.forEach((node) => {
-              collapsed.add(node.id);
-              forceExpanded.delete(node.id);
-            });
+          const close = expandable.some(isExpanded);
+          if (searchOpen) {
+            expandable.forEach((node) => close ? searchOpen.delete(node.id) : searchOpen.add(node.id));
           } else {
-            expandable.forEach((node) => collapsed.delete(node.id));
+            expandable.forEach((node) => close ? collapsed.add(node.id) : collapsed.delete(node.id));
+            localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
           }
-          localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
           const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
           renderRows();
           const restored = rows.findIndex((r) => r.node.id === keepGuid);
@@ -443,9 +455,8 @@ var plugins = (() => {
           else viewContext.openRecordInThisPanel(current.node.id);
         }, "openSelected");
         const focusView = /* @__PURE__ */ __name(() => {
-          if (!$root) return;
-          $root.tabIndex = -1;
-          $root.focus({ preventScroll: true });
+          const $focused = document.activeElement;
+          if ($focused instanceof HTMLElement && $focused !== document.body) $focused.blur();
         }, "focusView");
         const appChrome = /* @__PURE__ */ __name(() => $root && $root.closest(".custom-view") || null, "appChrome");
         const appSearchInput = /* @__PURE__ */ __name(() => {
@@ -471,7 +482,7 @@ var plugins = (() => {
         }, "isPeeking");
         let hintTimer = null;
         const syncKeyHints = /* @__PURE__ */ __name(() => {
-          if (viewFocused) plugin.showKeyHints(true, isPeeking());
+          if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid);
         }, "syncKeyHints");
         const stopHintTimer = /* @__PURE__ */ __name(() => {
           if (hintTimer) clearInterval(hintTimer);
@@ -675,6 +686,96 @@ var plugins = (() => {
             $menu.focus();
           }
         }, "showMenu");
+        const inZoom = /* @__PURE__ */ __name((record, parentFieldId) => {
+          for (let r = record, d = 0; r && d < 100; r = r.linkedRecord(parentFieldId), d++) {
+            if (r.guid === zoomGuid) return true;
+          }
+          return false;
+        }, "inZoom");
+        const rebuild = /* @__PURE__ */ __name(() => {
+          if (!lastRecords) return;
+          const parentFieldId = hierarchyFieldId();
+          if (zoomGuid && !parentFieldId) zoomGuid = null;
+          const scoped = zoomGuid ? lastRecords.filter((r) => inZoom(r, parentFieldId)) : lastRecords;
+          const completed = withAncestors(scoped, parentFieldId);
+          if (zoomGuid) {
+            completed.records = completed.records.filter((r) => inZoom(r, parentFieldId));
+            completed.added = new Set([...completed.added].filter((g) => completed.records.some((r) => r.guid === g)));
+          }
+          hierarchy = buildHierarchy(completed.records, parentFieldId);
+          const { matches, query } = findMatches(scoped);
+          if (completed.added.size || query) {
+            contextGuids = new Set(completed.records.map((r) => r.guid).filter((g) => !matches.has(g)));
+            const key = `${zoomGuid}|${query}|${[...matches].sort().join(",")}`;
+            if (key !== searchKey || !searchOpen) {
+              searchOpen = openToMatches(matches);
+              searchKey = key;
+            }
+          } else {
+            contextGuids = /* @__PURE__ */ new Set();
+            searchOpen = null;
+            searchKey = null;
+          }
+          if (!$list) mount();
+          renderOrphanNote();
+          renderZoomBar();
+          renderRows();
+        }, "rebuild");
+        const zoomTo = /* @__PURE__ */ __name((guid) => {
+          zoomGuid = guid || null;
+          selectedIndex = 0;
+          rebuild();
+          if (rows.length) setSelection(0);
+          syncKeyHints();
+        }, "zoomTo");
+        const takeZoomHandoff = /* @__PURE__ */ __name(() => {
+          const raw = document.documentElement.dataset.outlineZoom;
+          if (!raw) return;
+          let req = null;
+          try {
+            req = JSON.parse(raw);
+          } catch (err) {
+            req = null;
+          }
+          if (!req || req.collection !== collectionGuid()) return;
+          delete document.documentElement.dataset.outlineZoom;
+          if (Date.now() - (req.at || 0) > 1e4) return;
+          zoomGuid = req.guid || null;
+          selectedIndex = 0;
+          if (req.search) setTimeout(focusAppSearch, 50);
+        }, "takeZoomHandoff");
+        const renderZoomBar = /* @__PURE__ */ __name(() => {
+          if (!$zoom) return;
+          $zoom.innerHTML = "";
+          if (!zoomGuid) return;
+          const parentFieldId = hierarchyFieldId();
+          const target = plugin.data.getRecord(zoomGuid);
+          if (!target) return;
+          const chain = [target];
+          for (let p = target.linkedRecord(parentFieldId), d = 0; p && d < 100; p = p.linkedRecord(parentFieldId), d++) {
+            chain.unshift(p);
+          }
+          const $all = document.createElement("button");
+          $all.type = "button";
+          $all.className = "button-minimal button-small outline-zoom-step";
+          $all.textContent = "All";
+          $all.title = "Show the whole collection (\u21E7Z steps out)";
+          $all.addEventListener("click", () => zoomTo(null));
+          $zoom.appendChild($all);
+          chain.forEach((record, i) => {
+            const $sep = document.createElement("span");
+            $sep.className = "outline-zoom-sep ti ti-chevron-right";
+            const $step = document.createElement("button");
+            $step.type = "button";
+            $step.className = "button-minimal button-small outline-zoom-step" + (i === chain.length - 1 ? " is-current" : "");
+            const $label = document.createElement("span");
+            $label.textContent = record.getName() || "Untitled";
+            $step.appendChild($label);
+            $step.title = record.getName() || "";
+            $step.addEventListener("click", () => zoomTo(record.guid));
+            $zoom.append($sep, $step);
+          });
+        }, "renderZoomBar");
         const renderOrphanNote = /* @__PURE__ */ __name(() => {
           if (!$note) return;
           const orphaned = hierarchyBinding().orphaned;
@@ -1089,7 +1190,6 @@ var plugins = (() => {
           $row.className = "outline-row";
           if (contextGuids.has(node.id)) $row.classList.add("is-context");
           $row.dataset.index = String(index);
-          $row.tabIndex = index === selectedIndex ? 0 : -1;
           if (index === selectedIndex) $row.classList.add("selected");
           $row.dataset.guid = node.id;
           $row.dataset.indent = String(indent);
@@ -1134,6 +1234,26 @@ var plugins = (() => {
           $time.className = "outline-time";
           $time.textContent = timeAgo(node.record.date("Modified"));
           $title.appendChild($time);
+          if (canShowOptions()) {
+            const $opts = document.createElement("button");
+            $opts.type = "button";
+            $opts.className = "outline-row-menu button-none button-small button-minimal-hover tooltip";
+            $opts.setAttribute("aria-label", "Options");
+            $opts.dataset.tooltip = "Options";
+            $opts.dataset.tooltipDir = "top";
+            $opts.appendChild(ui.createIcon("ti-dots"));
+            $opts.addEventListener("mouseup", (e) => {
+              e.stopPropagation();
+              e.preventDefault();
+            });
+            $opts.addEventListener("click", (e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              setSelection(index);
+              nativePeek.showOptionsDropdown($opts, node.id);
+            });
+            $title.appendChild($opts);
+          }
           $row.appendChild($title);
           if (propMode && propMode.guid === node.id) {
             $row.appendChild(buildPropEditor(node, indent));
@@ -1160,6 +1280,9 @@ var plugins = (() => {
           $element.innerHTML = "";
           $root = document.createElement("div");
           $root.className = "outline-root collection-list-view";
+          $zoom = document.createElement("div");
+          $zoom.className = "outline-zoom";
+          $root.appendChild($zoom);
           $note = document.createElement("div");
           $note.className = "outline-note";
           $root.appendChild($note);
@@ -1206,6 +1329,41 @@ var plugins = (() => {
 						}
 						.outline-note:empty {
 							display: none;
+						}
+						.outline-zoom {
+							display: flex;
+							align-items: center;
+							min-width: 0;
+							overflow: hidden;
+							margin-bottom: 6px;
+						}
+						.outline-zoom:empty {
+							display: none;
+						}
+						.outline-zoom-sep {
+							flex: none;
+							opacity: .45;
+							font-size: 13px;
+						}
+						.outline-zoom-step {
+							display: inline-flex;
+							flex: 0 1 auto;
+							min-width: 3em;
+							max-width: 16em;
+						}
+						.outline-zoom-step:first-child {
+							flex: none;
+							min-width: 0;
+						}
+						.outline-zoom-step.is-current {
+							flex-shrink: 0.3;
+							font-weight: 600;
+						}
+						.outline-zoom-step > span {
+							overflow: hidden;
+							text-overflow: ellipsis;
+							white-space: nowrap;
+							min-width: 0;
 						}
 						.outline-menu {
 							position: absolute;
@@ -1404,6 +1562,24 @@ var plugins = (() => {
 							font-size: var(--text-size-small);
 							color: var(--text-muted);
 						}
+						/* Native: .collection-list-card-menu, shown on hover or on the
+						   focused card of a focused view. */
+						/* At the right end of line 1, like native's top-right corner. The
+						   chips already push themselves and the stamp right; with none on
+						   the line, the button takes the free space instead (two auto
+						   margins on one line would split it). */
+						.outline-row-menu {
+							flex: 0 0 auto;
+							margin-left: auto;
+							opacity: 0;
+						}
+						.outline-props ~ .outline-row-menu {
+							margin-left: 0;
+						}
+						.outline-row:hover .outline-row-menu,
+						.focused-component .outline-row.selected .outline-row-menu {
+							opacity: 1;
+						}
 						/*
 						 * Chips are pushed to the right, so they and the timestamp read
 						 * as one right-hand column instead of trailing the name at a
@@ -1539,14 +1715,9 @@ var plugins = (() => {
             mount();
           }, "onLoad"),
           onRefresh: /* @__PURE__ */ __name(({ records }) => {
-            const parentFieldId = hierarchyFieldId();
-            const completed = withAncestors(records, parentFieldId);
-            hierarchy = buildHierarchy(completed.records, parentFieldId);
-            contextGuids = completed.added;
-            computeForceExpanded(contextGuids);
-            if (!$list) mount();
-            renderOrphanNote();
-            renderRows();
+            lastRecords = records;
+            takeZoomHandoff();
+            rebuild();
           }, "onRefresh"),
           // Width decides which rows stack onto two lines, so every measured
           // height is suspect after a resize.
@@ -1568,10 +1739,11 @@ var plugins = (() => {
             $root = null;
             $list = null;
             $note = null;
+            $zoom = null;
             $menu = null;
+            lastRecords = null;
           }, "onDestroy"),
-          // Enter from the sidebar, a click, or a panel switch lands here; the
-          // selected row takes DOM focus then rather than on render.
+          // Enter from the sidebar, a click, or a panel switch lands here.
           onFocus: /* @__PURE__ */ __name(() => {
             viewFocused = true;
             syncKeyHints();
@@ -1623,6 +1795,20 @@ var plugins = (() => {
             if (e.key === "Enter" && e.shiftKey) {
               e.preventDefault();
               createRecord();
+              return;
+            }
+            if (e.code === "KeyZ" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              e.preventDefault();
+              if (!e.shiftKey) {
+                zoomTo(current.node.id);
+              } else if (zoomGuid) {
+                const node = hierarchy && hierarchy.nodes.get(zoomGuid);
+                const parent = node ? node.record.linkedRecord(hierarchyFieldId()) : null;
+                const from = zoomGuid;
+                zoomTo(parent ? parent.guid : null);
+                const back = rows.findIndex((r) => r.node.id === from);
+                if (back !== -1) setSelection(back);
+              }
               return;
             }
             if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {

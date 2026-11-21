@@ -157,7 +157,7 @@ const KEYS_BODY_CLASS = 'plg-outline-keys';
  * markup (.statusbar-item > .statusbar--kbd + .statusbar--kbd-label, read off
  * the live status bar 2026-11-15) so they pick up its styling.
  */
-function keyHintsHtml(peeking) {
+function keyHintsHtml(peeking, zoomed) {
 	const mac = /Mac|iPhone|iPad/.test(navigator.platform);
 	const mod = (sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`;
 	const cmd = mod('⌘', 'Ctrl');
@@ -176,6 +176,8 @@ function keyHintsHtml(peeking) {
 		['Space', 'Peek'],
 		['E', 'Edit'],
 		[`${shift}↵`, 'New'],
+		['Z', 'Zoom'],
+		...(zoomed ? [[`${shift}Z`, 'Zoom out']] : []),
 		['/', 'Search'],
 	];
 	return hints.map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
@@ -200,10 +202,11 @@ export class Plugin extends CollectionPlugin {
 	 * pinned over the left edge by CSS while the body class hides the app's
 	 * own hints there. One item per plugin, shared by every view instance.
 	 */
-	showKeyHints(on, peeking = false) {
+	showKeyHints(on, peeking = false, zoomed = false) {
+		const state = `${peeking}|${zoomed}`;
 		if (on && !this.keysItem) {
-			this.keysPeeking = peeking;
-			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking) });
+			this.keysState = state;
+			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking, zoomed) });
 			const $el = this.keysItem.getElement();
 			if ($el) {
 				$el.classList.add('outline-keys');
@@ -221,9 +224,9 @@ export class Plugin extends CollectionPlugin {
 				}
 			}
 		}
-		if (on && this.keysItem && this.keysPeeking !== peeking) {
-			this.keysPeeking = peeking;
-			this.keysItem.setHtmlLabel(keyHintsHtml(peeking));
+		if (on && this.keysItem && this.keysState !== state) {
+			this.keysState = state;
+			this.keysItem.setHtmlLabel(keyHintsHtml(peeking, zoomed));
 		}
 		document.body.classList.toggle(KEYS_BODY_CLASS, on);
 	}
@@ -289,6 +292,14 @@ export class Plugin extends CollectionPlugin {
 					.every(name => typeof view[name] === 'function');
 				return ok ? view : null;
 			})();
+			/**
+			 * Whether the app's record options menu (the native card's "⋯") can be
+			 * shown. Not SDK: `showOptionsDropdown(anchor, guid)` lives on the same
+			 * records-view object as native peek, and needs the record in its
+			 * `cachedAllItems`. Without it the rows get no button.
+			 */
+			const canShowOptions = () => !!nativePeek
+				&& typeof nativePeek.showOptionsDropdown === 'function';
 			const collectionGuid = () => plugin.collection.getGuid();
 			// Per VIEW, not per collection: two Outline views over different
 			// properties are different trees, so a shared key would have
@@ -303,16 +314,21 @@ export class Plugin extends CollectionPlugin {
 				collapsed = new Set();
 			}
 			/**
-			 * Guids held open so a filtered-in record is not buried under a
-			 * collapsed ancestor. Recomputed on every refresh, and dropped from a
-			 * node the moment the user collapses it by hand — searching and then
-			 * folding the results has to work.
+			 * While a search or filter is on, the nodes that are open — and only
+			 * those: it replaces `collapsed` rather than adding to it. Seeded with
+			 * every node that has a match below it, so the tree opens down to the
+			 * deepest match and no further. Folding by hand edits this set, not the
+			 * saved collapse state, so a search never rearranges the normal tree.
+			 * Null when no filter is on.
 			 */
-			let forceExpanded = new Set();
+			let searchOpen = null;
+			/** What `searchOpen` was seeded for, so a refresh mid-search keeps the user's folds. */
+			let searchKey = null;
 			/**
-			 * Guids present only to hold a filtered-in record's place in the tree.
-			 * Empty when no filter is on. Their rows are dimmed, so a search reads as
-			 * its matches with a path down to them rather than as an ordinary tree.
+			 * Rows that are on screen but are not matches: the ancestors put back
+			 * to hold a match's place, and records the app's search returned for
+			 * something other than their name. Empty when no filter is on. Their
+			 * rows are dimmed, so a search reads as its matches.
 			 */
 			let contextGuids = new Set();
 
@@ -324,6 +340,15 @@ export class Plugin extends CollectionPlugin {
 			let viewFocused = false;
 
 			let hierarchy = null;
+			/**
+			 * The record the view is zoomed into, or null for the whole collection.
+			 * Zoomed, only that record and its descendants are listed, and the app's
+			 * search narrows within them — "search under this page".
+			 */
+			let zoomGuid = null;
+			/** The last record set onRefresh delivered, so a zoom change can rebuild without one. */
+			let lastRecords = null;
+			let $zoom = null;
 			/** flattened currently-visible nodes, in display order */
 			let rows = [];
 			let selectedIndex = 0;
@@ -435,7 +460,7 @@ export class Plugin extends CollectionPlugin {
 
 			// --- data ----------------------------------------------------------
 
-			const isExpanded = (node) => !collapsed.has(node.id) || forceExpanded.has(node.id);
+			const isExpanded = (node) => searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id);
 
 			/** Properties the view is configured to show, minus what the row renders itself. */
 			const visibleFields = () => {
@@ -467,24 +492,37 @@ export class Plugin extends CollectionPlugin {
 				return text ? { text } : null;
 			};
 
-			/**
-			 * With a filter on, every node on a path down to a filtered-in record
-			 * opens, so the matches are all on screen. `contextGuids` are the
-			 * ancestors put back by withAncestors(); an empty set means no filter is
-			 * on, and then nothing is forced and the user's own collapse state is all
-			 * that decides.
-			 */
-			const computeForceExpanded = (contextGuids) => {
-				forceExpanded = new Set();
-				if (!hierarchy || !contextGuids.size) return;
+			/** Open every node with a match below it, and nothing else. */
+			const openToMatches = (matches) => {
+				const open = new Set();
 				const visit = (node) => {
-					const hasMatchBelow = node.children
-						.map(visit)
-						.some(Boolean);
-					if (hasMatchBelow) forceExpanded.add(node.id);
-					return hasMatchBelow || !contextGuids.has(node.id);
+					const hasMatchBelow = node.children.map(visit).some(Boolean);
+					if (hasMatchBelow) open.add(node.id);
+					return hasMatchBelow || matches.has(node.id);
 				};
 				hierarchy.rootNodes.forEach(visit);
+				return open;
+			};
+
+			/**
+			 * Which delivered records are matches. The app's search returns more
+			 * than the records whose names match — under sub-pages it brings back
+			 * the descendants of a match too — so a match here is a record whose
+			 * name holds every word of the query. When none does (a query matching
+			 * only body text, or a filter with no search text), every delivered
+			 * record counts, which is all the view can say about it.
+			 */
+			const findMatches = (delivered) => {
+				const $input = appSearchInput();
+				const words = ($input ? $input.value : '').toLowerCase().split(/\s+/).filter(Boolean);
+				if (words.length) {
+					const hits = delivered.filter(r => {
+						const name = (r.getName() || '').toLowerCase();
+						return words.every(w => name.includes(w));
+					});
+					if (hits.length) return { matches: new Set(hits.map(r => r.guid)), query: words.join(' ') };
+				}
+				return { matches: new Set(delivered.map(r => r.guid)), query: words.join(' ') };
 			};
 
 			const flatten = () => {
@@ -503,35 +541,14 @@ export class Plugin extends CollectionPlugin {
 				selectedIndex = Math.max(0, Math.min(index, rows.length - 1));
 				if (!$list) return;
 				ensureRendered(selectedIndex);
+				// Selection is a class only. Native cards take no DOM focus (it stays on
+				// document.body), so rows don't either: Tab and Shift+Tab then walk the
+				// browser's focus order from the same place native's do.
 				$list.querySelectorAll('.outline-row').forEach(($row) => {
-					const i = Number($row.dataset.index);
-					$row.classList.toggle('selected', i === selectedIndex);
-					// The roving Tab stop moves with the selection, so Tab back into
-					// the view returns to the row the user left.
-					$row.tabIndex = i === selectedIndex ? 0 : -1;
+					$row.classList.toggle('selected', Number($row.dataset.index) === selectedIndex);
 				});
 				const $selected = $list.querySelector(`.outline-row[data-index="${selectedIndex}"]`);
-				if ($selected) {
-					$selected.scrollIntoView({ block: 'nearest' });
-					// Put DOM focus on the row itself, the way native focuses a card.
-					// It matters for unhandled keys: Shift+Tab is the browser's, and
-					// from the view root — which precedes everything inside it in
-					// document order — it walks OUT of the view to the panel's
-					// breadcrumb. From the row it reaches the search box, as native does.
-					//
-					// Not while the caret is in the app's search box: refreshes land on
-					// every keystroke there, and stealing focus back would make the box
-					// impossible to type in.
-					//
-					// And only while the app has given this view focus. Arrowing
-					// through the sidebar previews each collection in the panel; grabbing
-					// DOM focus on that first render handed the keyboard to the rows,
-					// so the next arrow walked the outline instead of the sidebar.
-					if ((viewFocused || $root.contains(document.activeElement))
-						&& document.activeElement !== appSearchInput()) {
-						$selected.focus({ preventScroll: true });
-					}
-				}
+				if ($selected) $selected.scrollIntoView({ block: 'nearest' });
 				// Native peek follows the focused card as you keep browsing — but only
 				// while the peek panel is still open. The user may have closed it.
 				//
@@ -545,13 +562,14 @@ export class Plugin extends CollectionPlugin {
 			};
 
 			const toggle = (node) => {
-				if (isExpanded(node)) {
-					collapsed.add(node.id);
-					forceExpanded.delete(node.id);
+				if (searchOpen) {
+					if (searchOpen.has(node.id)) searchOpen.delete(node.id);
+					else searchOpen.add(node.id);
 				} else {
-					collapsed.delete(node.id);
+					if (isExpanded(node)) collapsed.add(node.id);
+					else collapsed.delete(node.id);
+					localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
 				}
-				localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
 				const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
 				renderRows();
 				const restored = rows.findIndex(r => r.node.id === keepGuid);
@@ -567,15 +585,13 @@ export class Plugin extends CollectionPlugin {
 				};
 				hierarchy.rootNodes.forEach(visit);
 				if (!expandable.length) return;
-				if (expandable.some(isExpanded)) {
-					expandable.forEach(node => {
-						collapsed.add(node.id);
-						forceExpanded.delete(node.id);
-					});
+				const close = expandable.some(isExpanded);
+				if (searchOpen) {
+					expandable.forEach(node => close ? searchOpen.delete(node.id) : searchOpen.add(node.id));
 				} else {
-					expandable.forEach(node => collapsed.delete(node.id));
+					expandable.forEach(node => close ? collapsed.add(node.id) : collapsed.delete(node.id));
+					localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
 				}
-				localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
 				const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
 				renderRows();
 				const restored = rows.findIndex(r => r.node.id === keepGuid);
@@ -648,11 +664,16 @@ export class Plugin extends CollectionPlugin {
 			 * preview; while it is up, arrows keep browsing and the side panel follows.
 			 */
 
-			/** Pull DOM focus back into the view root so key hooks fire here again. */
+			/**
+			 * Take DOM focus off whatever holds it (a menu, an inline input, the
+			 * peeked aside's editor) so key hooks fire here again. Focus is left on
+			 * document.body, where native leaves it, not on the view root: the root
+			 * precedes the toolbar in document order, so Shift+Tab from it walked
+			 * out of the view to the panel's breadcrumb.
+			 */
 			const focusView = () => {
-				if (!$root) return;
-				$root.tabIndex = -1;
-				$root.focus({ preventScroll: true });
+				const $focused = document.activeElement;
+				if ($focused instanceof HTMLElement && $focused !== document.body) $focused.blur();
 			};
 
 			/**
@@ -712,7 +733,7 @@ export class Plugin extends CollectionPlugin {
 			 */
 			let hintTimer = null;
 			const syncKeyHints = () => {
-				if (viewFocused) plugin.showKeyHints(true, isPeeking());
+				if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid);
 			};
 			const stopHintTimer = () => {
 				if (hintTimer) clearInterval(hintTimer);
@@ -1018,6 +1039,113 @@ export class Plugin extends CollectionPlugin {
 			 * working outline that happens to be flat. Transient by design: the
 			 * installer's reconcile removes orphaned views.
 			 */
+			/** Whether `record` is the zoom root or sits anywhere under it. */
+			const inZoom = (record, parentFieldId) => {
+				for (let r = record, d = 0; r && d < 100; r = r.linkedRecord(parentFieldId), d++) {
+					if (r.guid === zoomGuid) return true;
+				}
+				return false;
+			};
+
+			const rebuild = () => {
+				if (!lastRecords) return;
+				const parentFieldId = hierarchyFieldId();
+				if (zoomGuid && !parentFieldId) zoomGuid = null;
+				const scoped = zoomGuid ? lastRecords.filter(r => inZoom(r, parentFieldId)) : lastRecords;
+				// The app hands over the matches alone once its search or a filter
+				// is on; the tree needs the path down to each of them back.
+				const completed = withAncestors(scoped, parentFieldId);
+				if (zoomGuid) {
+					// ...but only down from the zoom root, never above it.
+					completed.records = completed.records.filter(r => inZoom(r, parentFieldId));
+					completed.added = new Set([...completed.added].filter(g => completed.records.some(r => r.guid === g)));
+				}
+				hierarchy = buildHierarchy(completed.records, parentFieldId);
+				const { matches, query } = findMatches(scoped);
+				// Ancestors put back mean the app narrowed the set; so does any
+				// search text, even when every match happens to be a root.
+				if (completed.added.size || query) {
+					contextGuids = new Set(completed.records.map(r => r.guid).filter(g => !matches.has(g)));
+					const key = `${zoomGuid}|${query}|${[...matches].sort().join(',')}`;
+					if (key !== searchKey || !searchOpen) {
+						searchOpen = openToMatches(matches);
+						searchKey = key;
+					}
+				} else {
+					contextGuids = new Set();
+					searchOpen = null;
+					searchKey = null;
+				}
+				if (!$list) mount();
+				renderOrphanNote();
+				renderZoomBar();
+				renderRows();
+			};
+
+			const zoomTo = (guid) => {
+				zoomGuid = guid || null;
+				selectedIndex = 0;
+				rebuild();
+				if (rows.length) setSelection(0);
+				syncKeyHints();
+			};
+
+			/**
+			 * Another plugin (Hierarchy's "Search under this page") opens this view
+			 * zoomed by leaving {collection, guid, search, at} on <html> just before
+			 * navigating here. Taken once, and only while fresh, so a stale request
+			 * can't re-zoom a later visit.
+			 */
+			const takeZoomHandoff = () => {
+				const raw = document.documentElement.dataset.outlineZoom;
+				if (!raw) return;
+				let req = null;
+				try { req = JSON.parse(raw); } catch (err) { req = null; }
+				if (!req || req.collection !== collectionGuid()) return;
+				delete document.documentElement.dataset.outlineZoom;
+				if (Date.now() - (req.at || 0) > 10000) return;
+				zoomGuid = req.guid || null;
+				selectedIndex = 0;
+				if (req.search) setTimeout(focusAppSearch, 50);
+			};
+
+			/** "Root › … › Zoomed" above the rows, each step re-zooming; × shows everything. */
+			const renderZoomBar = () => {
+				if (!$zoom) return;
+				$zoom.innerHTML = '';
+				if (!zoomGuid) return;
+				const parentFieldId = hierarchyFieldId();
+				// Not from the delivered set: a search with no hits under the root
+				// still has to say what the view is zoomed into.
+				const target = plugin.data.getRecord(zoomGuid);
+				if (!target) return;
+				const chain = [target];
+				for (let p = target.linkedRecord(parentFieldId), d = 0; p && d < 100; p = p.linkedRecord(parentFieldId), d++) {
+					chain.unshift(p);
+				}
+				const $all = document.createElement('button');
+				$all.type = 'button';
+				$all.className = 'button-minimal button-small outline-zoom-step';
+				$all.textContent = 'All';
+				$all.title = 'Show the whole collection (⇧Z steps out)';
+				$all.addEventListener('click', () => zoomTo(null));
+				$zoom.appendChild($all);
+				chain.forEach((record, i) => {
+					const $sep = document.createElement('span');
+					$sep.className = 'outline-zoom-sep ti ti-chevron-right';
+					const $step = document.createElement('button');
+					$step.type = 'button';
+					$step.className = 'button-minimal button-small outline-zoom-step'
+						+ (i === chain.length - 1 ? ' is-current' : '');
+					const $label = document.createElement('span');
+					$label.textContent = record.getName() || 'Untitled';
+					$step.appendChild($label);
+					$step.title = record.getName() || '';
+					$step.addEventListener('click', () => zoomTo(record.guid));
+					$zoom.append($sep, $step);
+				});
+			};
+
 			const renderOrphanNote = () => {
 				if (!$note) return;
 				const orphaned = hierarchyBinding().orphaned;
@@ -1532,15 +1660,6 @@ export class Plugin extends CollectionPlugin {
 				// filter dropped and the tree needed back.
 				if (contextGuids.has(node.id)) $row.classList.add('is-context');
 				$row.dataset.index = String(index);
-				// Roving tabindex: the selected row is the view's single stop in the
-				// browser's Tab order, every other row is focusable only by script.
-				// Tab out of the app's search box has to land ON a row for this
-				// view's own Tab handling to take over and step the list, the way
-				// the built-in List view does; with every row at -1 the browser
-				// walked straight past them to the create card and out of the view.
-				// Unhandled keys (Shift+Tab) still need the focused row here so the
-				// browser walks focus from the row, not from the view root.
-				$row.tabIndex = index === selectedIndex ? 0 : -1;
 				if (index === selectedIndex) $row.classList.add('selected');
 				$row.dataset.guid = node.id;
 				// restack() needs the depth indent to line the chips up under the
@@ -1604,6 +1723,34 @@ export class Plugin extends CollectionPlugin {
 				$time.textContent = timeAgo(node.record.date('Modified'));
 				$title.appendChild($time);
 
+				// The native list card's "⋯" Options button: hidden until the row is
+				// hovered or selected in a focused view, and it opens the app's own
+				// record options menu. Besides the menu it fixes Tab: native Tab out of
+				// the search box lands on the first card's (invisible) button, so the
+				// keyboard stays in the list; with nothing focusable in the rows the
+				// browser skipped to the create card at the bottom and scrolled there.
+				if (canShowOptions()) {
+					const $opts = document.createElement('button');
+					$opts.type = 'button';
+					$opts.className = 'outline-row-menu button-none button-small button-minimal-hover tooltip';
+					$opts.setAttribute('aria-label', 'Options');
+					$opts.dataset.tooltip = 'Options';
+					$opts.dataset.tooltipDir = 'top';
+					$opts.appendChild(ui.createIcon('ti-dots'));
+					// The row opens its record on mouseup; keep that off the button.
+					$opts.addEventListener('mouseup', (e) => {
+						e.stopPropagation();
+						e.preventDefault();
+					});
+					$opts.addEventListener('click', (e) => {
+						e.stopPropagation();
+						e.preventDefault();
+						setSelection(index);
+						nativePeek.showOptionsDropdown($opts, node.id);
+					});
+					$title.appendChild($opts);
+				}
+
 				$row.appendChild($title);
 
 				if (propMode && propMode.guid === node.id) {
@@ -1642,6 +1789,10 @@ export class Plugin extends CollectionPlugin {
 				// overhang, gaps) that the native list rows and create card are
 				// sized from; it only sets width:100%/position:relative itself.
 				$root.className = 'outline-root collection-list-view';
+
+				$zoom = document.createElement('div');
+				$zoom.className = 'outline-zoom';
+				$root.appendChild($zoom);
 
 				$note = document.createElement('div');
 				$note.className = 'outline-note';
@@ -1692,6 +1843,41 @@ export class Plugin extends CollectionPlugin {
 						}
 						.outline-note:empty {
 							display: none;
+						}
+						.outline-zoom {
+							display: flex;
+							align-items: center;
+							min-width: 0;
+							overflow: hidden;
+							margin-bottom: 6px;
+						}
+						.outline-zoom:empty {
+							display: none;
+						}
+						.outline-zoom-sep {
+							flex: none;
+							opacity: .45;
+							font-size: 13px;
+						}
+						.outline-zoom-step {
+							display: inline-flex;
+							flex: 0 1 auto;
+							min-width: 3em;
+							max-width: 16em;
+						}
+						.outline-zoom-step:first-child {
+							flex: none;
+							min-width: 0;
+						}
+						.outline-zoom-step.is-current {
+							flex-shrink: 0.3;
+							font-weight: 600;
+						}
+						.outline-zoom-step > span {
+							overflow: hidden;
+							text-overflow: ellipsis;
+							white-space: nowrap;
+							min-width: 0;
 						}
 						.outline-menu {
 							position: absolute;
@@ -1890,6 +2076,24 @@ export class Plugin extends CollectionPlugin {
 							font-size: var(--text-size-small);
 							color: var(--text-muted);
 						}
+						/* Native: .collection-list-card-menu, shown on hover or on the
+						   focused card of a focused view. */
+						/* At the right end of line 1, like native's top-right corner. The
+						   chips already push themselves and the stamp right; with none on
+						   the line, the button takes the free space instead (two auto
+						   margins on one line would split it). */
+						.outline-row-menu {
+							flex: 0 0 auto;
+							margin-left: auto;
+							opacity: 0;
+						}
+						.outline-props ~ .outline-row-menu {
+							margin-left: 0;
+						}
+						.outline-row:hover .outline-row-menu,
+						.focused-component .outline-row.selected .outline-row-menu {
+							opacity: 1;
+						}
 						/*
 						 * Chips are pushed to the right, so they and the timestamp read
 						 * as one right-hand column instead of trailing the name at a
@@ -2028,16 +2232,9 @@ export class Plugin extends CollectionPlugin {
 				},
 
 				onRefresh: ({ records }) => {
-					const parentFieldId = hierarchyFieldId();
-					// The app hands over the matches alone once its search or a filter
-					// is on; the tree needs the path down to each of them back.
-					const completed = withAncestors(records, parentFieldId);
-					hierarchy = buildHierarchy(completed.records, parentFieldId);
-					contextGuids = completed.added;
-					computeForceExpanded(contextGuids);
-					if (!$list) mount();
-					renderOrphanNote();
-					renderRows();
+					lastRecords = records;
+					takeZoomHandoff();
+					rebuild();
 				},
 
 				// Width decides which rows stack onto two lines, so every measured
@@ -2061,11 +2258,12 @@ export class Plugin extends CollectionPlugin {
 					$root = null;
 					$list = null;
 					$note = null;
+					$zoom = null;
 					$menu = null;
+					lastRecords = null;
 				},
 
-				// Enter from the sidebar, a click, or a panel switch lands here; the
-				// selected row takes DOM focus then rather than on render.
+				// Enter from the sidebar, a click, or a panel switch lands here.
 				onFocus: () => {
 					viewFocused = true;
 					syncKeyHints();
@@ -2140,6 +2338,22 @@ export class Plugin extends CollectionPlugin {
 					if (e.key === 'Enter' && e.shiftKey) {
 						e.preventDefault();
 						createRecord();
+						return;
+					}
+
+					// Z zooms into the selected row; ⇧Z steps back out one level.
+					if (e.code === 'KeyZ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+						e.preventDefault();
+						if (!e.shiftKey) {
+							zoomTo(current.node.id);
+						} else if (zoomGuid) {
+							const node = hierarchy && hierarchy.nodes.get(zoomGuid);
+							const parent = node ? node.record.linkedRecord(hierarchyFieldId()) : null;
+							const from = zoomGuid;
+							zoomTo(parent ? parent.guid : null);
+							const back = rows.findIndex(r => r.node.id === from);
+							if (back !== -1) setSelection(back);
+						}
 						return;
 					}
 
