@@ -115,10 +115,7 @@ var plugins = (() => {
     return { nodes, rootNodes };
   }
   __name(buildHierarchy, "buildHierarchy");
-  function hierarchyCandidates(fields, collectionGuid) {
-    return (fields || []).filter((field) => field.type === "record" && field.active !== false && field.many !== true && (field.id === "parent_page" || field.filter_colguid === collectionGuid));
-  }
-  __name(hierarchyCandidates, "hierarchyCandidates");
+  var SUBPAGE = "parent_page";
   var IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
   var KBD_SLOT = (IS_MAC ? "mac" : "win") + (window.thymerDesktopAPI ? "_electron" : "_web");
   var DEFAULT_KEYS = IS_MAC ? {
@@ -129,7 +126,9 @@ var plugins = (() => {
     "nav.foldcascade": "Meta+Shift+,",
     "nav.unfoldcascade": "Meta+Shift+.",
     "panel.zoom_out": "Alt+ArrowUp",
-    "panel.zoom_in": "Alt+ArrowDown"
+    "panel.zoom_in": "Alt+ArrowDown",
+    "collection.trash_record": "Meta+Backspace",
+    "plugin.outlinehints": "Shift+?"
   } : {
     "nav.togglefold": "Ctrl+/",
     "nav.togglefolddescendants": "Ctrl+Shift+?",
@@ -138,7 +137,9 @@ var plugins = (() => {
     "nav.foldcascade": "Ctrl+Shift+<",
     "nav.unfoldcascade": "Ctrl+Shift+>",
     "panel.zoom_out": "Alt+ArrowUp",
-    "panel.zoom_in": "Alt+ArrowDown"
+    "panel.zoom_in": "Alt+ArrowDown",
+    "collection.trash_record": "Ctrl+Delete",
+    "plugin.outlinehints": "Shift+?"
   };
   for (const action of [
     "nav.unfolddescendants",
@@ -293,45 +294,64 @@ var plugins = (() => {
     Delete: "Del",
     Backspace: IS_MAC ? "\u232B" : "Bksp"
   };
+  var SHIFTED_CHARS = /* @__PURE__ */ new Set([...Object.values(SHIFTED_CODE_KEYS), ...")!@#$%^&*("]);
   function keyLabel(key) {
     if (!key) return "";
-    const parts = key.split("+");
+    let parts = key.split("+");
     const last = parts.pop();
+    if (SHIFTED_CHARS.has(last)) parts = parts.filter((m) => m !== "Shift");
     const k = KEY_GLYPHS[last] || last;
     if (!IS_MAC) return [...parts.map((m) => m === "Meta" ? "Ctrl" : m), k].join("+");
     const glyph = { Meta: "\u2318", Ctrl: "\u2303", Alt: "\u2325", Shift: "\u21E7" };
-    return parts.map((m) => `<span class="kbdmod kbdmod-mac">${glyph[m]}</span>`).join("") + k;
+    return parts.map((m) => glyph[m]).join("") + k;
   }
   __name(keyLabel, "keyLabel");
+  var KBDMOD_GLYPHS = /* @__PURE__ */ new Set(["\u232B", "\u2326", "\u21B5", "\u21E7", "\u2303", "\u2325", "\u2318", "\u2192", "\u2190", "\u2191", "\u2193", "\u2195", "\u2194", "\u21E5"]);
+  function kbdHtml(text) {
+    const esc = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+    return Array.from(text, (c) => KBDMOD_GLYPHS.has(c) ? `<span class="kbdmod ${IS_MAC ? "kbdmod-mac" : ""}">${c}</span>` : esc[c] || c).join("");
+  }
+  __name(kbdHtml, "kbdHtml");
   var KEYS_BODY_CLASS = "plg-outline-keys";
-  function keyHintsHtml(peeking, zoomed) {
-    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-    const mod = /* @__PURE__ */ __name((sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`, "mod");
-    const cmd = mod("\u2318", "Ctrl");
-    const shift = mod("\u21E7", "Shift");
+  function keyHints(peeking, zoomed, itemName) {
+    const cmd = IS_MAC ? "\u2318" : "Ctrl+";
+    const shift = IS_MAC ? "\u21E7" : "Shift+";
     const { keys } = foldKeymap();
-    const cascade = [keys["nav.foldcascade"], keys["nav.unfoldcascade"]].filter(Boolean).map(keyLabel).join(" ");
+    const up = keys["nav.unfoldcascade"], down = keys["nav.foldcascade"];
+    const modsOf = /* @__PURE__ */ __name((k) => k.split("+").slice(0, -1).join("+"), "modsOf");
+    const cascade = up && down && modsOf(up) === modsOf(down) ? keyLabel(up) + keyLabel(down.split("+").pop()) : [up, down].filter(Boolean).map(keyLabel).join(" ");
+    const mono = "statusbar--kbd-modifier";
     const hints = peeking ? [
-      ["Esc", "Exit Peek"],
-      ["\u21B5", "Open"],
-      ["\u2191\u2193", "Browse"]
+      ["Esc", "Exit Peek", mono],
+      ["\u21B5", "Open", mono],
+      ["\u2195 \u2194", "Browse", mono]
     ] : [
-      ["\u2191\u2193", "Move"],
-      [keyLabel(keys["nav.togglefold"]), "Fold"],
-      [cascade, "Fold level"],
-      [keyLabel(keys["nav.togglefoldcontainer"]), "Fold all"],
-      ["\u21B5", "Open"],
-      [`${cmd}\u21B5`, "Open aside"],
-      ["Space", "Peek"],
-      ["E", "Edit"],
-      [`${shift}\u21B5`, "New"],
+      ["/", "Search", mono],
+      ["Space", "Peek", mono],
+      ["\u21B5", "Open", mono],
+      ["R", "Rename", mono],
+      [`${cmd}\u21B5`, "Open Aside", mono],
+      [`${shift}\u21B5`, `Create ${itemName}`, mono],
+      [keyLabel(keys["collection.trash_record"]), "Trash", mono],
+      ["E", "Edit", mono],
+      ["\u21E5", "Indent", mono],
+      [`${shift}\u21E5`, "Outdent", mono],
+      [`${cmd}${shift}\u2191\u2193`, "Reorder", mono],
       [keyLabel(keys["panel.zoom_in"]), "Zoom"],
       ...zoomed ? [[keyLabel(keys["panel.zoom_out"]), "Zoom out"]] : [],
-      ["/", "Search"]
+      [keyLabel(keys["nav.togglefold"]), "Fold"],
+      [keyLabel(keys["nav.togglefoldchildren"]), "Fold children"],
+      [keyLabel(keys["nav.togglefolddescendants"]), "Fold descendants"],
+      [cascade, "Fold level"],
+      [keyLabel(keys["nav.togglefoldcontainer"]), "Fold all"]
     ];
-    return hints.filter(([k]) => k).map(([k, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${k}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join("");
+    return hints.filter(([k]) => k);
   }
-  __name(keyHintsHtml, "keyHintsHtml");
+  __name(keyHints, "keyHints");
+  function hintsHtml(hints) {
+    return hints.map(([k, label, cls]) => `<span class="statusbar-item${cls ? " " + cls : ""}"><span class="statusbar--kbd">${kbdHtml(k)}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join("");
+  }
+  __name(hintsHtml, "hintsHtml");
   var Plugin = class extends CollectionPlugin {
     static {
       __name(this, "Plugin");
@@ -351,16 +371,20 @@ var plugins = (() => {
      * pinned over the left edge by CSS while the body class hides the app's
      * own hints there. One item per plugin, shared by every view instance.
      */
-    showKeyHints(on, peeking = false, zoomed = false) {
+    showKeyHints(on, peeking = false, zoomed = false, itemName = "Page") {
       const map = foldKeymap();
       if (map !== this.keysMap) {
         this.keysMap = map;
         this.keysEpoch = (this.keysEpoch || 0) + 1;
       }
-      const state = `${peeking}|${zoomed}|${this.keysEpoch}`;
-      if (on && !this.keysItem) {
-        this.keysState = state;
-        this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking, zoomed) });
+      document.body.classList.toggle(KEYS_BODY_CLASS, on);
+      if (!on) {
+        this.keysStart = 0;
+        return;
+      }
+      const state = `${peeking}|${zoomed}|${itemName}|${this.keysEpoch}`;
+      if (!this.keysItem) {
+        this.keysItem = this.ui.addStatusBarItem({ htmlLabel: "" });
         const $el = this.keysItem.getElement();
         if ($el) {
           $el.classList.add("outline-keys");
@@ -369,19 +393,58 @@ var plugins = (() => {
           if ($right) {
             const fit = /* @__PURE__ */ __name(() => {
               $el.style.right = `${$right.offsetWidth + 10}px`;
+              this.renderKeyHints();
             }, "fit");
             this.keysObserver = new ResizeObserver(fit);
             this.keysObserver.observe($right);
             this.keysObserver.observe($bar);
-            fit();
           }
         }
       }
-      if (on && this.keysItem && this.keysState !== state) {
+      if (this.keysState !== state) {
         this.keysState = state;
-        this.keysItem.setHtmlLabel(keyHintsHtml(peeking, zoomed));
+        this.keysHints = keyHints(peeking, zoomed, itemName);
+        this.keysStart = 0;
+        this.renderKeyHints();
       }
-      document.body.classList.toggle(KEYS_BODY_CLASS, on);
+    }
+    /** The hint elements as laid out, or [] when the strip isn't showing. */
+    keyHintItems() {
+      const $el = this.keysItem && this.keysItem.getElement();
+      const $label = $el && $el.querySelector(".statusbar-item--label");
+      return $label ? Array.from($label.children) : [];
+    }
+    /** How many leading items sit on the strip's visible first line. */
+    visibleKeyHints() {
+      const items = this.keyHintItems();
+      if (!items.length) return 0;
+      const at = items.findIndex((i) => i.offsetTop > items[0].offsetTop);
+      return at === -1 ? items.length : at;
+    }
+    /**
+     * Draw the page of hints starting at `keysStart`. The More hint (the paging
+     * key) leads whenever anything is out of view, and is left off when the
+     * whole set fits without it.
+     */
+    renderKeyHints() {
+      if (!this.keysItem || !this.keysHints) return;
+      const page = this.keysHints.slice(this.keysStart);
+      const more = keyLabel(foldKeymap().keys["plugin.outlinehints"]);
+      this.keysMore = !!more;
+      this.keysItem.setHtmlLabel(hintsHtml(more ? [[more, "More"], ...page] : page));
+      if (more && this.keysStart === 0 && this.visibleKeyHints() === page.length + 1) {
+        this.keysMore = false;
+        this.keysItem.setHtmlLabel(hintsHtml(page));
+      }
+    }
+    /** Show the next page of hints: from the first one out of view, else from the top. */
+    pageKeyHints() {
+      if (!this.keysHints) return;
+      const lead = this.keysMore ? 1 : 0;
+      const shown = this.visibleKeyHints() - lead;
+      const next = this.keysStart + Math.max(1, shown);
+      this.keysStart = shown < this.keyHintItems().length - lead && next < this.keysHints.length ? next : 0;
+      this.renderKeyHints();
     }
     /**
      * Claim every custom view the collection has, rather than one hardcoded id.
@@ -482,23 +545,7 @@ var plugins = (() => {
           });
           return map;
         }, "fieldsById");
-        const hierarchyBinding = /* @__PURE__ */ __name(() => {
-          const conf = plugin.getConfiguration();
-          const candidates = hierarchyCandidates(conf.fields, collectionGuid());
-          const view = (conf.views || []).find((v) => v.id === viewId);
-          const bound = view && view.opts ? view.opts.hierarchy_field_id : null;
-          if (bound) {
-            const field = candidates.find((f) => f.id === bound);
-            if (field) return { fieldId: field.id, orphaned: null };
-            return { fieldId: null, orphaned: bound };
-          }
-          if (candidates.some((f) => f.id === "parent_page")) {
-            return { fieldId: "parent_page", orphaned: null };
-          }
-          const self = candidates.find((f) => f.id !== "parent_page");
-          return { fieldId: self ? self.id : null, orphaned: null };
-        }, "hierarchyBinding");
-        const hierarchyFieldId = /* @__PURE__ */ __name(() => hierarchyBinding().fieldId, "hierarchyFieldId");
+        const hierarchyFieldId = /* @__PURE__ */ __name(() => (plugin.getConfiguration().fields || []).some((f) => f.id === SUBPAGE && f.active !== false) ? SUBPAGE : null, "hierarchyFieldId");
         const choiceColorsFor = /* @__PURE__ */ __name((field) => {
           const map = {};
           (field.choices || []).forEach((c) => {
@@ -692,6 +739,48 @@ var plugins = (() => {
             refold();
             return;
           }
+          if (action === "plugin.outlinehints") {
+            plugin.pageKeyHints();
+            return;
+          }
+          if (action === "collection.trash_record") {
+            const gone = /* @__PURE__ */ new Set([node.id, ...nodesUnder(node).map((n) => n.id)]);
+            const next = rows.slice(selectedIndex + 1).find((r) => !gone.has(r.node.id)) || rows[selectedIndex - 1];
+            if (node.id === zoomGuid) {
+              const parent = node.record.linkedRecord(hierarchyFieldId());
+              zoomTo(parent ? parent.guid : null);
+            }
+            if (next) {
+              followGuid = next.node.id;
+              clearTimeout(followTimer);
+              followTimer = setTimeout(() => {
+                followGuid = null;
+              }, 3e3);
+            }
+            const fieldId = hierarchyFieldId();
+            plugin.collection.getAllRecords().then((records) => {
+              const children = /* @__PURE__ */ new Map();
+              for (const r of records) {
+                const parent = r.linkedRecord(fieldId);
+                if (!parent) continue;
+                if (!children.has(parent.guid)) children.set(parent.guid, []);
+                children.get(parent.guid).push(r);
+              }
+              const subtree = [node.record];
+              const seen = /* @__PURE__ */ new Set([node.id]);
+              for (let i = 0; i < subtree.length; i++) {
+                for (const c of children.get(subtree[i].guid) || []) {
+                  if (!seen.has(c.guid)) {
+                    seen.add(c.guid);
+                    subtree.push(c);
+                  }
+                }
+              }
+              subtree.reverse().forEach((r) => r.trash());
+              afterWrite();
+            });
+            return;
+          }
           if (action === "panel.zoom_in") {
             zoomTo(node.id);
           } else if (action === "panel.zoom_out" && zoomGuid) {
@@ -776,7 +865,7 @@ var plugins = (() => {
         }, "isPeeking");
         let hintTimer = null;
         const syncKeyHints = /* @__PURE__ */ __name(() => {
-          if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid);
+          if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid, viewContext.getRecordTypeName());
         }, "syncKeyHints");
         const stopHintTimer = /* @__PURE__ */ __name(() => {
           if (hintTimer) clearInterval(hintTimer);
@@ -1010,7 +1099,7 @@ var plugins = (() => {
             searchKey = null;
           }
           if (!$list) mount();
-          renderOrphanNote();
+          renderNote();
           renderZoomBar();
           renderRows();
         }, "rebuild");
@@ -1068,11 +1157,10 @@ var plugins = (() => {
             $zoom.append($sep, $step);
           });
         }, "renderZoomBar");
-        const renderOrphanNote = /* @__PURE__ */ __name(() => {
+        const renderNote = /* @__PURE__ */ __name(() => {
           if (!$note) return;
-          const orphaned = hierarchyBinding().orphaned;
-          $note.textContent = orphaned ? 'The property this view nested by is gone, so rows are flat. Run "Outline: install into a collection..." to clean this up.' : "";
-        }, "renderOrphanNote");
+          $note.textContent = hierarchyFieldId() ? "" : 'Sub-pages are off in this collection, so rows are flat. Run "Outline: install into a collection..." to turn them on.';
+        }, "renderNote");
         const EDITABLE_TYPES = ["text", "number", "choice", "record"];
         const EDIT_SKIP_IDS = ["title", "icon", "collection"];
         const editableFields = /* @__PURE__ */ __name(() => {
@@ -1088,6 +1176,133 @@ var plugins = (() => {
           return value ? value.text : "";
         }, "fieldText");
         const afterWrite = /* @__PURE__ */ __name(() => setTimeout(() => renderRows(), 60), "afterWrite");
+        const pending = /* @__PURE__ */ new Map();
+        let settleTimer = 0;
+        const SETTLE_MS = 3e3;
+        const notePending = /* @__PURE__ */ __name((guid, key, value) => {
+          pending.set(guid, { ...pending.get(guid), [key]: value });
+          clearTimeout(settleTimer);
+          settleTimer = setTimeout(() => {
+            pending.clear();
+            rebuild();
+          }, SETTLE_MS);
+        }, "notePending");
+        const settled = /* @__PURE__ */ __name((records) => {
+          const byGuid = new Map(records.map((r) => [r.guid, r]));
+          const fieldId = hierarchyFieldId();
+          const ord = orderField();
+          for (const [guid, p] of pending) {
+            const record = byGuid.get(guid);
+            if (!record) continue;
+            if ("parent" in p) {
+              const linked = fieldId ? record.linkedRecord(fieldId) : null;
+              if ((linked ? linked.guid : null) !== p.parent) return false;
+            }
+            if ("order" in p && ord && record.prop(ord.id).number() !== p.order) return false;
+          }
+          pending.clear();
+          clearTimeout(settleTimer);
+          return true;
+        }, "settled");
+        let followGuid = null;
+        let followTimer = 0;
+        const toast = /* @__PURE__ */ __name((title, message) => ui.addToaster({ title, message, dismissible: true, autoDestroyTime: 4e3 }), "toast");
+        const orderField = /* @__PURE__ */ __name(() => {
+          const view = (plugin.getConfiguration().views || []).find((v) => v.id === viewId);
+          const field = view ? fieldsById()[view.sort_field_id] : null;
+          if (!field || field.type !== "number" || field.read_only || field.active === false) return null;
+          return { id: field.id, label: field.label, dir: view.sort_dir === "desc" ? -1 : 1 };
+        }, "orderField");
+        const orderOf = /* @__PURE__ */ __name((node, ord) => {
+          const p = pending.get(node.id);
+          if (p && "order" in p) return p.order;
+          return node.record.prop(ord.id).number();
+        }, "orderOf");
+        const parentOf = /* @__PURE__ */ __name((node) => {
+          const parent = node.parentGuid ? hierarchy.nodes.get(node.parentGuid) : null;
+          return parent && parent.children.includes(node) ? parent : null;
+        }, "parentOf");
+        const childList = /* @__PURE__ */ __name((parent) => parent ? parent.children : hierarchy.rootNodes, "childList");
+        const followsOrder = /* @__PURE__ */ __name((list, ord) => {
+          let last = null;
+          for (const n of list) {
+            const v = orderOf(n, ord);
+            if (v === null) continue;
+            if (last !== null && ord.dir * (v - last) < 0) return false;
+            last = v;
+          }
+          return true;
+        }, "followsOrder");
+        const positionWrites = /* @__PURE__ */ __name((node, kids, index, ord) => {
+          const list = [...kids];
+          list.splice(index, 0, node);
+          const n = list.length;
+          return list.map((m, i) => ({ node: m, value: ord.dir > 0 ? i + 1 : n - i })).filter(({ node: m, value }) => orderOf(m, ord) !== value);
+        }, "positionWrites");
+        const writeParent = /* @__PURE__ */ __name((node, parent) => node.record.setSubPageOf(parent ? parent.id : null) !== false, "writeParent");
+        const rearrange = /* @__PURE__ */ __name((op) => {
+          const current = rows[selectedIndex];
+          if (!current || !hierarchy || !hierarchyFieldId()) return;
+          const node = current.node;
+          if (contextGuids.size || searchOpen) {
+            toast("Clear the search to rearrange", "With a search or filter on, the outline shows only part of each level.");
+            return;
+          }
+          if (node.id === zoomGuid) return;
+          const parent = parentOf(node);
+          const siblings = childList(parent);
+          const at = siblings.indexOf(node);
+          let target = parent;
+          let index;
+          if (op === "indent") {
+            if (at <= 0) return;
+            target = siblings[at - 1];
+            index = target.children.length;
+          } else if (op === "outdent") {
+            if (!parent || parent.id === zoomGuid) return;
+            target = parentOf(parent);
+            index = childList(target).indexOf(parent) + 1;
+          } else {
+            index = at + (op === "down" ? 1 : -1);
+            if (index < 0 || index >= siblings.length) return;
+          }
+          const ord = orderField();
+          if (!ord && (op === "up" || op === "down")) {
+            toast("Sort by a number property to reorder", "Sibling order is stored in the number property the view is sorted by.");
+            return;
+          }
+          const kids = childList(target).filter((n) => n !== node);
+          if (ord && !(followsOrder(siblings, ord) && followsOrder(kids, ord))) {
+            toast(`Sort by ${ord.label} to rearrange`, `The rows aren't in ${ord.label} order, so a new position wouldn't show.`);
+            return;
+          }
+          const writes = ord ? positionWrites(node, kids, index, ord) : [];
+          if (target !== parent) {
+            if (!writeParent(node, target)) {
+              toast("Couldn't move the page", "The app refused the new parent.");
+              return;
+            }
+            notePending(node.id, "parent", target ? target.id : null);
+          }
+          writes.forEach(({ node: n, value }) => {
+            n.record.prop(ord.id).set(value);
+            notePending(n.id, "order", value);
+          });
+          const from = childList(parent);
+          from.splice(from.indexOf(node), 1);
+          childList(target).splice(index, 0, node);
+          node.parentGuid = target ? target.id : null;
+          if (target && collapsed.has(target.id)) {
+            collapsed.delete(target.id);
+            localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+          }
+          followGuid = node.id;
+          clearTimeout(followTimer);
+          followTimer = setTimeout(() => {
+            followGuid = null;
+          }, 3e3);
+          renderRows();
+        }, "rearrange");
         const editText = /* @__PURE__ */ __name(($cell, value, { onCommit, onCancel }) => {
           const $input = document.createElement("input");
           $input.type = "text";
@@ -1152,7 +1367,7 @@ var plugins = (() => {
         }, "descendantsOf");
         const recordCandidates = /* @__PURE__ */ __name(async (field, node) => {
           if (!field.filter_colguid || field.filter_colguid === collectionGuid()) {
-            const banned = descendantsOf(node);
+            const banned = field.id === SUBPAGE ? descendantsOf(node) : /* @__PURE__ */ new Set();
             return [...hierarchy.nodes.values()].filter((n) => n.id !== node.id && !banned.has(n.id)).map((n) => ({ guid: n.id, name: n.name }));
           }
           const other = plugin.data.getPluginByGuid(field.filter_colguid);
@@ -1210,7 +1425,7 @@ var plugins = (() => {
           if (field.type === "record") {
             const linked = record.linkedRecord(field.id);
             const link = /* @__PURE__ */ __name((guid) => {
-              if (field.id === "parent_page") record.setSubPageOf(guid);
+              if (field.id === SUBPAGE) record.setSubPageOf(guid);
               else prop().set(guid);
             }, "link");
             recordCandidates(field, node).then((candidates) => {
@@ -1443,6 +1658,10 @@ var plugins = (() => {
           $topPad = $bottomPad = null;
           win = { start: 0, end: 0 };
           rows = hierarchy ? flatten() : [];
+          if (followGuid) {
+            const at = rows.findIndex((r) => r.node.id === followGuid);
+            if (at !== -1) selectedIndex = at;
+          }
           if (rows.length === 0) {
             const $empty = document.createElement("div");
             $empty.className = "outline-empty";
@@ -2010,6 +2229,7 @@ var plugins = (() => {
           onRefresh: /* @__PURE__ */ __name(({ records }) => {
             lastRecords = records;
             takeZoomHandoff();
+            if (pending.size && !settled(records)) return;
             rebuild();
           }, "onRefresh"),
           // Width decides which rows stack onto two lines, so every measured
@@ -2086,6 +2306,11 @@ var plugins = (() => {
               }
               return;
             }
+            if ((e.key === "r" || e.key === "R" || e.key === "F2") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              e.preventDefault();
+              startNameEdit(current.node, false);
+              return;
+            }
             if (e.key === "Enter" && e.shiftKey) {
               e.preventDefault();
               createRecord();
@@ -2111,6 +2336,16 @@ var plugins = (() => {
               peekSelected();
               return;
             }
+            if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              e.preventDefault();
+              rearrange(e.shiftKey ? "outdent" : "indent");
+              return;
+            }
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              rearrange(e.key === "ArrowDown" ? "down" : "up");
+              return;
+            }
             if ((e.metaKey || e.ctrlKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault();
               const hasChildren = current.node.children.length > 0;
@@ -2130,11 +2365,6 @@ var plugins = (() => {
               return;
             }
             switch (e.key) {
-              case "Tab":
-                if (e.shiftKey) return;
-                e.preventDefault();
-                selectNext(1);
-                break;
               case "ArrowDown":
                 e.preventDefault();
                 selectNext(1);

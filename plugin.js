@@ -1,9 +1,8 @@
 /// <reference path="./sdk/types.d.ts" />
 /**
- * "Outline" — a native-list-style custom view for a self-referencing collection.
- * Rows are indented by depth from the collection's sub-page link ("Sub-page of"
- * / `parent_page`), falling back to the first record-link field that points back
- * at this collection; each node expands/collapses. The view toolbar is the
+ * "Outline" — a native-list-style custom view of a collection's sub-pages.
+ * Rows are indented by depth from the sub-page link ("Sub-page of" /
+ * `parent_page`); each node expands/collapses. The view toolbar is the
  * app's own — custom views are given it, so this draws only the tree.
  *
  * Nothing here is bound to a particular collection: fields, views, sort and item
@@ -57,9 +56,8 @@ function withAncestors(records, parentFieldId) {
 		records.forEach(record => {
 			let parent = record.linkedRecord(parentFieldId);
 			// A parent already in the map ends the walk: it carries its own
-			// ancestors up from where it sits. The depth cap is what stops a
-			// cyclic link from spinning here (buildHierarchy handles the cycle
-			// itself, but only once it has the records).
+			// ancestors up from where it sits. The depth cap stops a cycle
+			// spinning here (see buildHierarchy for how one can exist).
 			for (let depth = 0; parent && !byGuid.has(parent.guid) && depth < 100; depth++) {
 				byGuid.set(parent.guid, parent);
 				added.add(parent.guid);
@@ -73,9 +71,10 @@ function withAncestors(records, parentFieldId) {
 /**
  * Build a parent/child forest from records linked by `parentFieldId`.
  * Records whose parent is unset or points outside the set become roots.
- * Records caught in a cycle are promoted to roots so they stay visible — the
- * app's own sub-page writes refuse cycles, but a record-link field is free to
- * hold one, and so is a sub-page link written before this view existed.
+ * Records caught in a cycle are promoted to roots so they stay visible. Only
+ * setSubPageOf() refuses cycles: the app's raw property write doesn't check
+ * (read in the bundle 2026-11-22), so an MCP or Markdown Mirror edit to
+ * "Sub-page of" can still make one.
  */
 function buildHierarchy(records, parentFieldId) {
 	const nodes = new Map();
@@ -128,30 +127,19 @@ function buildHierarchy(records, parentFieldId) {
 }
 
 /**
- * The properties a hierarchy can be read from: a record link, active, single
- * valued, pointing back at this same collection.
- *
- * Multi-valued links are excluded because they give a record several parents —
- * a graph, not a tree — and a record would have to appear in more than one
- * place, which the guid-keyed collapse state and selection both assume it never
- * does. Links to a DIFFERENT collection are excluded because their targets are
- * not in this collection's record set, so they can't nest anything here; that
- * is a grouping, not an outline.
- *
- * `parent_page` is accepted whether or not it carries `filter_colguid`: the app
- * fills that in itself, so a config read in the same tick as the write that
- * added the field does not have it yet.
+ * The one hierarchy the view draws: sub-pages. `collection.enableSubPages(true)`
+ * provisions it as a plain record field, "Sub-page of", filtered to this
+ * collection, so reading it needs nothing special. Writes go through
+ * setSubPageOf(), where the app's cycle and same-collection checks live.
  */
-function hierarchyCandidates(fields, collectionGuid) {
-	return (fields || []).filter(field => field.type === 'record'
-		&& field.active !== false
-		&& field.many !== true
-		&& (field.id === 'parent_page' || field.filter_colguid === collectionGuid));
-}
+const SUBPAGE = 'parent_page';
 
-// --- Thymer's fold and zoom shortcuts --------------------------------------
+// --- Thymer's fold, zoom and trash shortcuts ------------------------------
 //
-// The outline answers to Thymer's own fold and zoom actions on whatever keys
+// (Plus one of ours, `plugin.outlinehints`, which pages the status-bar hints;
+// it's bound the same way, in Thymer's custom shortcuts text.)
+//
+// The outline answers to Thymer's own fold, zoom and trash actions on whatever keys
 // the user has them bound to. Plugins can't ask the app for its keymap, so it
 // is rebuilt here from the same two sources the app uses (bundle `Ix`, client
 // 1.0.20): the defaults below, then the account's custom shortcuts text for
@@ -175,6 +163,8 @@ const DEFAULT_KEYS = IS_MAC ? {
 	'nav.unfoldcascade': 'Meta+Shift+.',
 	'panel.zoom_out': 'Alt+ArrowUp',
 	'panel.zoom_in': 'Alt+ArrowDown',
+	'collection.trash_record': 'Meta+Backspace',
+	'plugin.outlinehints': 'Shift+?',
 } : {
 	'nav.togglefold': 'Ctrl+/',
 	'nav.togglefolddescendants': 'Ctrl+Shift+?',
@@ -184,6 +174,8 @@ const DEFAULT_KEYS = IS_MAC ? {
 	'nav.unfoldcascade': 'Ctrl+Shift+>',
 	'panel.zoom_out': 'Alt+ArrowUp',
 	'panel.zoom_in': 'Alt+ArrowDown',
+	'collection.trash_record': 'Ctrl+Delete',
+	'plugin.outlinehints': 'Shift+?',
 };
 for (const action of ['nav.unfolddescendants', 'nav.folddescendants', 'nav.togglefoldchildren',
 	'nav.foldcontainer', 'nav.unfoldcontainer', 'nav.togglefoldcontainer']) {
@@ -294,15 +286,30 @@ const KEY_GLYPHS = {
 	ArrowDown: '↓', PageUp: 'PgUp', PageDown: 'PgDn', Delete: 'Del', Backspace: IS_MAC ? '⌫' : 'Bksp',
 };
 
-/** A key as the status bar shows it: "Meta+Shift+," → ⌘⇧, on a Mac (the mac modifier glyphs in the app's own markup). */
+const SHIFTED_CHARS = new Set([...Object.values(SHIFTED_CODE_KEYS), ...')!@#$%^&*(']);
+
+/** A key as the status bar shows it, as plain text: "Meta+Shift+," → "⌘⇧," on a Mac. */
 function keyLabel(key) {
 	if (!key) return '';
-	const parts = key.split('+');
+	let parts = key.split('+');
 	const last = parts.pop();
+	// A character only typed with Shift already says so: "Shift+?" shows as "?".
+	if (SHIFTED_CHARS.has(last)) parts = parts.filter(m => m !== 'Shift');
 	const k = KEY_GLYPHS[last] || last;
 	if (!IS_MAC) return [...parts.map(m => m === 'Meta' ? 'Ctrl' : m), k].join('+');
 	const glyph = { Meta: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' };
-	return parts.map(m => `<span class="kbdmod kbdmod-mac">${glyph[m]}</span>`).join('') + k;
+	return parts.map(m => glyph[m]).join('') + k;
+}
+
+/** The glyphs the app sets as `kbdmod` (its `HY` set). */
+const KBDMOD_GLYPHS = new Set(['⌫', '⌦', '↵', '⇧', '⌃', '⌥', '⌘', '→', '←', '↑', '↓', '↕', '↔', '⇥']);
+
+/** Key text as markup, each glyph in a kbdmod span: the app's `_n()`, which every status-bar key goes through. */
+function kbdHtml(text) {
+	const esc = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+	return Array.from(text, c => KBDMOD_GLYPHS.has(c)
+		? `<span class="kbdmod ${IS_MAC ? 'kbdmod-mac' : ''}">${c}</span>`
+		: (esc[c] || c)).join('');
 }
 
 /** Set on <body> while an Outline view has focus; swaps in the view's key hints. */
@@ -313,34 +320,54 @@ const KEYS_BODY_CLASS = 'plg-outline-keys';
  * markup (.statusbar-item > .statusbar--kbd + .statusbar--kbd-label, read off
  * the live status bar 2026-11-15) so they pick up its styling.
  */
-function keyHintsHtml(peeking, zoomed) {
-	const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-	const mod = (sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`;
-	const cmd = mod('⌘', 'Ctrl');
-	const shift = mod('⇧', 'Shift');
+function keyHints(peeking, zoomed, itemName) {
+	const cmd = IS_MAC ? '⌘' : 'Ctrl+';
+	const shift = IS_MAC ? '⇧' : 'Shift+';
 	const { keys } = foldKeymap();
-	const cascade = [keys['nav.foldcascade'], keys['nav.unfoldcascade']].filter(Boolean).map(keyLabel).join(' ');
+	// Fold level: unfold then fold, the shared modifiers written once ("⌘⇧.,").
+	const up = keys['nav.unfoldcascade'], down = keys['nav.foldcascade'];
+	const modsOf = k => k.split('+').slice(0, -1).join('+');
+	const cascade = up && down && modsOf(up) === modsOf(down)
+		? keyLabel(up) + keyLabel(down.split('+').pop())
+		: [up, down].filter(Boolean).map(keyLabel).join(' ');
+	// statusbar--kbd-modifier on an item sets its key in the mono font
+	// (`.statusbar--kbd-modifier .statusbar--kbd`). Native List gives it to every
+	// hint; its reference view leaves it off user-rebindable fold keys, so the
+	// fold and zoom hints go without it here.
+	const mono = 'statusbar--kbd-modifier';
 	// While peeking, the set the app's own views show then (getPeekStatusBarContext).
+	// Otherwise native List's set first, in its order and wording, then ours.
 	const hints = peeking ? [
-		['Esc', 'Exit Peek'],
-		['↵', 'Open'],
-		['↑↓', 'Browse'],
+		['Esc', 'Exit Peek', mono],
+		['↵', 'Open', mono],
+		['↕ ↔', 'Browse', mono],
 	] : [
-		['↑↓', 'Move'],
-		[keyLabel(keys['nav.togglefold']), 'Fold'],
-		[cascade, 'Fold level'],
-		[keyLabel(keys['nav.togglefoldcontainer']), 'Fold all'],
-		['↵', 'Open'],
-		[`${cmd}↵`, 'Open aside'],
-		['Space', 'Peek'],
-		['E', 'Edit'],
-		[`${shift}↵`, 'New'],
+		['/', 'Search', mono],
+		['Space', 'Peek', mono],
+		['↵', 'Open', mono],
+		['R', 'Rename', mono],
+		[`${cmd}↵`, 'Open Aside', mono],
+		[`${shift}↵`, `Create ${itemName}`, mono],
+		[keyLabel(keys['collection.trash_record']), 'Trash', mono],
+		['E', 'Edit', mono],
+		['⇥', 'Indent', mono],
+		[`${shift}⇥`, 'Outdent', mono],
+		[`${cmd}${shift}↑↓`, 'Reorder', mono],
 		[keyLabel(keys['panel.zoom_in']), 'Zoom'],
 		...(zoomed ? [[keyLabel(keys['panel.zoom_out']), 'Zoom out']] : []),
-		['/', 'Search'],
+		[keyLabel(keys['nav.togglefold']), 'Fold'],
+		[keyLabel(keys['nav.togglefoldchildren']), 'Fold children'],
+		[keyLabel(keys['nav.togglefolddescendants']), 'Fold descendants'],
+		[cascade, 'Fold level'],
+		[keyLabel(keys['nav.togglefoldcontainer']), 'Fold all'],
 	];
 	// An action with no key has no hint.
-	return hints.filter(([k]) => k).map(([k, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${k}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
+	return hints.filter(([k]) => k);
+}
+
+/** Hints as the status bar's own markup. */
+function hintsHtml(hints) {
+	return hints.map(([k, label, cls]) => `<span class="statusbar-item${cls ? ' ' + cls : ''}"><span class="statusbar--kbd">${kbdHtml(k)}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
 }
 
 export class Plugin extends CollectionPlugin {
@@ -362,17 +389,21 @@ export class Plugin extends CollectionPlugin {
 	 * pinned over the left edge by CSS while the body class hides the app's
 	 * own hints there. One item per plugin, shared by every view instance.
 	 */
-	showKeyHints(on, peeking = false, zoomed = false) {
+	showKeyHints(on, peeking = false, zoomed = false, itemName = 'Page') {
 		// The keymap object is replaced whenever the user's shortcuts change.
 		const map = foldKeymap();
 		if (map !== this.keysMap) {
 			this.keysMap = map;
 			this.keysEpoch = (this.keysEpoch || 0) + 1;
 		}
-		const state = `${peeking}|${zoomed}|${this.keysEpoch}`;
-		if (on && !this.keysItem) {
-			this.keysState = state;
-			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking, zoomed) });
+		document.body.classList.toggle(KEYS_BODY_CLASS, on);
+		if (!on) {
+			this.keysStart = 0;
+			return;
+		}
+		const state = `${peeking}|${zoomed}|${itemName}|${this.keysEpoch}`;
+		if (!this.keysItem) {
+			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: '' });
 			const $el = this.keysItem.getElement();
 			if ($el) {
 				$el.classList.add('outline-keys');
@@ -382,19 +413,65 @@ export class Plugin extends CollectionPlugin {
 				const $bar = $el.closest('.statusbar--status-bar');
 				const $right = $bar && $bar.querySelector('.statusbar--right');
 				if ($right) {
-					const fit = () => { $el.style.right = `${$right.offsetWidth + 10}px`; };
+					const fit = () => {
+						$el.style.right = `${$right.offsetWidth + 10}px`;
+						// What fits changed, so whether More is needed may have too.
+						this.renderKeyHints();
+					};
 					this.keysObserver = new ResizeObserver(fit);
 					this.keysObserver.observe($right);
 					this.keysObserver.observe($bar);
-					fit();
 				}
 			}
 		}
-		if (on && this.keysItem && this.keysState !== state) {
+		if (this.keysState !== state) {
 			this.keysState = state;
-			this.keysItem.setHtmlLabel(keyHintsHtml(peeking, zoomed));
+			this.keysHints = keyHints(peeking, zoomed, itemName);
+			this.keysStart = 0;
+			this.renderKeyHints();
 		}
-		document.body.classList.toggle(KEYS_BODY_CLASS, on);
+	}
+
+	/** The hint elements as laid out, or [] when the strip isn't showing. */
+	keyHintItems() {
+		const $el = this.keysItem && this.keysItem.getElement();
+		const $label = $el && $el.querySelector('.statusbar-item--label');
+		return $label ? Array.from($label.children) : [];
+	}
+
+	/** How many leading items sit on the strip's visible first line. */
+	visibleKeyHints() {
+		const items = this.keyHintItems();
+		if (!items.length) return 0;
+		const at = items.findIndex(i => i.offsetTop > items[0].offsetTop);
+		return at === -1 ? items.length : at;
+	}
+
+	/**
+	 * Draw the page of hints starting at `keysStart`. The More hint (the paging
+	 * key) leads whenever anything is out of view, and is left off when the
+	 * whole set fits without it.
+	 */
+	renderKeyHints() {
+		if (!this.keysItem || !this.keysHints) return;
+		const page = this.keysHints.slice(this.keysStart);
+		const more = keyLabel(foldKeymap().keys['plugin.outlinehints']);
+		this.keysMore = !!more;
+		this.keysItem.setHtmlLabel(hintsHtml(more ? [[more, 'More'], ...page] : page));
+		if (more && this.keysStart === 0 && this.visibleKeyHints() === page.length + 1) {
+			this.keysMore = false;
+			this.keysItem.setHtmlLabel(hintsHtml(page));
+		}
+	}
+
+	/** Show the next page of hints: from the first one out of view, else from the top. */
+	pageKeyHints() {
+		if (!this.keysHints) return;
+		const lead = this.keysMore ? 1 : 0;
+		const shown = this.visibleKeyHints() - lead;
+		const next = this.keysStart + Math.max(1, shown);
+		this.keysStart = shown < this.keyHintItems().length - lead && next < this.keysHints.length ? next : 0;
+		this.renderKeyHints();
 	}
 
 	/**
@@ -567,48 +644,13 @@ export class Plugin extends CollectionPlugin {
 			};
 
 			/**
-			 * The property THIS view draws its tree from, and whether the one it was
-			 * told to draw has gone missing.
-			 *
-			 * The binding lives in the view's own config entry, under
-			 * `opts.hierarchy_field_id` — verified to survive the app's
-			 * collection-settings screen, so editing the view in the UI does not
-			 * erase it. That is what lets one collection carry several Outline
-			 * views, each over a different self-referencing property.
-			 *
-			 * With no binding the old collection-wide behavior stands: sub-pages if
-			 * present, else the first self-referencing property. That keeps views
-			 * predating this — and any custom view a user adds by hand — working.
-			 *
-			 * A binding pointing at a property that is gone reports `orphaned`
-			 * instead of silently falling back. Falling back would leave a view
-			 * labelled for one property quietly drawing another, with nothing on
-			 * screen saying so. The installer's reconcile is what clears these up;
-			 * until it runs the view says what happened and lists rows flat.
-			 *
-			 * `parent_page` is what `collection.enableSubPages(true)` provisions — a
-			 * plain record field labelled "Sub-page of", filtered to this collection
-			 * — so it needs no special handling to READ. Writes go through
-			 * setSubPageOf(), which is what refuses cycles.
+			 * The parent field: sub-pages, or null while the collection has them
+			 * off (the rows then list flat, with a note saying why). Read from the
+			 * config, the app's own hasSubPages() test, rather than from
+			 * hasSubPages(), whose field index lags a config write.
 			 */
-			const hierarchyBinding = () => {
-				const conf = plugin.getConfiguration();
-				const candidates = hierarchyCandidates(conf.fields, collectionGuid());
-				const view = (conf.views || []).find(v => v.id === viewId);
-				const bound = view && view.opts ? view.opts.hierarchy_field_id : null;
-				if (bound) {
-					const field = candidates.find(f => f.id === bound);
-					if (field) return { fieldId: field.id, orphaned: null };
-					return { fieldId: null, orphaned: bound };
-				}
-				if (candidates.some(f => f.id === 'parent_page')) {
-					return { fieldId: 'parent_page', orphaned: null };
-				}
-				const self = candidates.find(f => f.id !== 'parent_page');
-				return { fieldId: self ? self.id : null, orphaned: null };
-			};
-
-			const hierarchyFieldId = () => hierarchyBinding().fieldId;
+			const hierarchyFieldId = () => (plugin.getConfiguration().fields || [])
+				.some(f => f.id === SUBPAGE && f.active !== false) ? SUBPAGE : null;
 
 			const choiceColorsFor = (field) => {
 				const map = {};
@@ -873,6 +915,49 @@ export class Plugin extends CollectionPlugin {
 					refold();
 					return;
 				}
+				if (action === 'plugin.outlinehints') {
+					plugin.pageKeyHints();
+					return;
+				}
+				if (action === 'collection.trash_record') {
+					// Trash the page and every page under it, then select the next row
+					// past them, else the previous one (native picks next, else previous).
+					// The subtree is walked over the whole collection, not the rows on
+					// screen, so children a search or filter hides go too.
+					const gone = new Set([node.id, ...nodesUnder(node).map(n => n.id)]);
+					const next = rows.slice(selectedIndex + 1).find(r => !gone.has(r.node.id)) || rows[selectedIndex - 1];
+					if (node.id === zoomGuid) {
+						const parent = node.record.linkedRecord(hierarchyFieldId());
+						zoomTo(parent ? parent.guid : null);
+					}
+					if (next) {
+						followGuid = next.node.id;
+						clearTimeout(followTimer);
+						followTimer = setTimeout(() => { followGuid = null; }, 3000);
+					}
+					const fieldId = hierarchyFieldId();
+					plugin.collection.getAllRecords().then((records) => {
+						const children = new Map();
+						for (const r of records) {
+							const parent = r.linkedRecord(fieldId);
+							if (!parent) continue;
+							if (!children.has(parent.guid)) children.set(parent.guid, []);
+							children.get(parent.guid).push(r);
+						}
+						// `seen` stops a cycle looping (see buildHierarchy for how one can exist).
+						const subtree = [node.record];
+						const seen = new Set([node.id]);
+						for (let i = 0; i < subtree.length; i++) {
+							for (const c of children.get(subtree[i].guid) || []) {
+								if (!seen.has(c.guid)) { seen.add(c.guid); subtree.push(c); }
+							}
+						}
+						// Deepest first, so no page is ever left under a trashed parent.
+						subtree.reverse().forEach(r => r.trash());
+						afterWrite();
+					});
+					return;
+				}
 				if (action === 'panel.zoom_in') {
 					zoomTo(node.id);
 				} else if (action === 'panel.zoom_out' && zoomGuid) {
@@ -886,7 +971,7 @@ export class Plugin extends CollectionPlugin {
 			};
 
 			/**
-			 * Fold and zoom keys are taken before the app sees them: its window
+			 * Fold, zoom and trash keys are taken before the app sees them: its window
 			 * handler runs the zoom actions itself (opening the record in place of
 			 * the view), so the view's own key hook would never get them.
 			 */
@@ -1037,7 +1122,7 @@ export class Plugin extends CollectionPlugin {
 			 */
 			let hintTimer = null;
 			const syncKeyHints = () => {
-				if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid);
+				if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid, viewContext.getRecordTypeName());
 			};
 			const stopHintTimer = () => {
 				if (hintTimer) clearInterval(hintTimer);
@@ -1338,11 +1423,6 @@ export class Plugin extends CollectionPlugin {
 				}
 			};
 
-			/**
-			 * A view whose property was deleted says so rather than passing for a
-			 * working outline that happens to be flat. Transient by design: the
-			 * installer's reconcile removes orphaned views.
-			 */
 			/** Whether `record` is the zoom root or sits anywhere under it. */
 			const inZoom = (record, parentFieldId) => {
 				for (let r = record, d = 0; r && d < 100; r = r.linkedRecord(parentFieldId), d++) {
@@ -1386,7 +1466,7 @@ export class Plugin extends CollectionPlugin {
 					searchKey = null;
 				}
 				if (!$list) mount();
-				renderOrphanNote();
+				renderNote();
 				renderZoomBar();
 				renderRows();
 			};
@@ -1454,13 +1534,12 @@ export class Plugin extends CollectionPlugin {
 				});
 			};
 
-			const renderOrphanNote = () => {
+			/** With sub-pages off there is no tree, and the flat rows say why. */
+			const renderNote = () => {
 				if (!$note) return;
-				const orphaned = hierarchyBinding().orphaned;
-				$note.textContent = orphaned
-					? 'The property this view nested by is gone, so rows are flat. '
-						+ 'Run "Outline: install into a collection..." to clean this up.'
-					: '';
+				$note.textContent = hierarchyFieldId() ? ''
+					: 'Sub-pages are off in this collection, so rows are flat. '
+						+ 'Run "Outline: install into a collection..." to turn them on.';
 			};
 
 			// --- inline editing --------------------------------------------------
@@ -1470,12 +1549,8 @@ export class Plugin extends CollectionPlugin {
 			 * of a card's property list too), then the properties the row already
 			 * shows as chips, minus the types there is no editor for.
 			 *
-			 * The hierarchy field is deliberately NOT skipped, whether it is
-			 * `parent_page` or a hand-made one: re-hanging a branch is the edit an
-			 * outline is for. `parent_page` was in the skip list from the commit that
-			 * added E-mode, back when the tree came from a hand-made `Parent` field
-			 * and the sub-page field was unused; moving the hierarchy onto
-			 * `parent_page` turned that skip into a silent regression.
+			 * "Sub-page of" is deliberately NOT skipped: re-hanging a branch is the
+			 * edit an outline is for.
 			 */
 			const EDITABLE_TYPES = ['text', 'number', 'choice', 'record'];
 			const EDIT_SKIP_IDS = ['title', 'icon', 'collection'];
@@ -1484,8 +1559,8 @@ export class Plugin extends CollectionPlugin {
 					&& EDITABLE_TYPES.includes(f.type) && !EDIT_SKIP_IDS.includes(f.id);
 				// The fields the row already shows come first, then everything else
 				// the collection has. Native property mode walks only the card's shown
-				// properties; going wider is what puts a hand-made hierarchy field in
-				// reach, since it is usually not one of the row's chips.
+				// properties; going wider is what puts "Sub-page of" in reach, since
+				// it is usually not one of the row's chips.
 				const shown = visibleFields().filter(canEdit);
 				const rest = (plugin.getConfiguration().fields || [])
 					.filter(f => canEdit(f) && !shown.some(s => s.id === f.id));
@@ -1505,6 +1580,182 @@ export class Plugin extends CollectionPlugin {
 			 * arrives on its own schedule — re-render once it has landed.
 			 */
 			const afterWrite = () => setTimeout(() => renderRows(), 60);
+
+			// --- Rearranging from the keyboard -----------------------------------
+			//
+			// Tab / Shift+Tab / ⌘⇧↑ / ⌘⇧↓ indent, outdent and move the selected row
+			// the way the editor does with lines. A row's place is two properties:
+			// its parent (the view's hierarchy field) and its position among its
+			// siblings (the number property the view is sorted by). Each key writes
+			// the parent, the position, or both.
+
+			/**
+			 * Writes from moves that the delivered records don't show yet: guid →
+			 * { parent?, order? }. A write is not readable in the same tick, so a
+			 * second key pressed before the refresh reads positions from here. And
+			 * the refreshes that follow a move arrive while only some of its writes
+			 * have landed: drawing those put the row back where it was, then
+			 * forward again. So while this holds anything, a refresh is drawn only
+			 * once it shows every write (or the wait runs out).
+			 */
+			const pending = new Map();
+			let settleTimer = 0;
+			const SETTLE_MS = 3000;
+			const notePending = (guid, key, value) => {
+				pending.set(guid, { ...pending.get(guid), [key]: value });
+				clearTimeout(settleTimer);
+				settleTimer = setTimeout(() => { pending.clear(); rebuild(); }, SETTLE_MS);
+			};
+			/** Whether `records` show every pending write; clears them if so. */
+			const settled = (records) => {
+				const byGuid = new Map(records.map(r => [r.guid, r]));
+				const fieldId = hierarchyFieldId();
+				const ord = orderField();
+				for (const [guid, p] of pending) {
+					const record = byGuid.get(guid);
+					if (!record) continue;
+					if ('parent' in p) {
+						const linked = fieldId ? record.linkedRecord(fieldId) : null;
+						if ((linked ? linked.guid : null) !== p.parent) return false;
+					}
+					if ('order' in p && ord && record.prop(ord.id).number() !== p.order) return false;
+				}
+				pending.clear();
+				clearTimeout(settleTimer);
+				return true;
+			};
+			/** The row to keep selected across the renders that follow a move. */
+			let followGuid = null;
+			let followTimer = 0;
+
+			const toast = (title, message) => ui.addToaster({ title, message, dismissible: true, autoDestroyTime: 4000 });
+
+			/** The view's sort when it is a writable number property: where sibling order lives. */
+			const orderField = () => {
+				const view = (plugin.getConfiguration().views || []).find(v => v.id === viewId);
+				const field = view ? fieldsById()[view.sort_field_id] : null;
+				if (!field || field.type !== 'number' || field.read_only || field.active === false) return null;
+				return { id: field.id, label: field.label, dir: view.sort_dir === 'desc' ? -1 : 1 };
+			};
+
+			const orderOf = (node, ord) => {
+				const p = pending.get(node.id);
+				if (p && 'order' in p) return p.order;
+				return node.record.prop(ord.id).number();
+			};
+
+			/** The node's parent in the tree as drawn (a cycle-promoted root has none; see buildHierarchy). */
+			const parentOf = (node) => {
+				const parent = node.parentGuid ? hierarchy.nodes.get(node.parentGuid) : null;
+				return parent && parent.children.includes(node) ? parent : null;
+			};
+			const childList = (parent) => parent ? parent.children : hierarchy.rootNodes;
+
+			/**
+			 * Whether the rows arrived in the order the property says. The toolbar
+			 * can sort by something else for the session without touching the
+			 * config, and writing positions the screen doesn't follow would look
+			 * like the key did nothing.
+			 */
+			const followsOrder = (list, ord) => {
+				let last = null;
+				for (const n of list) {
+					const v = orderOf(n, ord);
+					if (v === null) continue;
+					if (last !== null && ord.dir * (v - last) < 0) return false;
+					last = v;
+				}
+				return true;
+			};
+
+			/**
+			 * The position writes that put `node` at `index` of `kids` (which does
+			 * not contain it): the siblings renumbered 1, 2, 3… in their new order,
+			 * writing only the values that change. The list it left keeps its
+			 * order with a gap, which needs no write.
+			 */
+			const positionWrites = (node, kids, index, ord) => {
+				const list = [...kids];
+				list.splice(index, 0, node);
+				const n = list.length;
+				return list
+					.map((m, i) => ({ node: m, value: ord.dir > 0 ? i + 1 : n - i }))
+					.filter(({ node: m, value }) => orderOf(m, ord) !== value);
+			};
+
+			const writeParent = (node, parent) => node.record.setSubPageOf(parent ? parent.id : null) !== false;
+
+			/** `op` is 'indent', 'outdent', 'up' or 'down', applied to the selected row. */
+			const rearrange = (op) => {
+				const current = rows[selectedIndex];
+				if (!current || !hierarchy || !hierarchyFieldId()) return;
+				const node = current.node;
+				// With search text or a filter on, a level shows only some of its
+				// pages, so "the row above" may not be the page above.
+				if (contextGuids.size || searchOpen) {
+					toast('Clear the search to rearrange', 'With a search or filter on, the outline shows only part of each level.');
+					return;
+				}
+				// The zoom root's siblings aren't on screen, and nothing may leave it.
+				if (node.id === zoomGuid) return;
+
+				const parent = parentOf(node);
+				const siblings = childList(parent);
+				const at = siblings.indexOf(node);
+				let target = parent;
+				let index;
+				if (op === 'indent') {
+					if (at <= 0) return;
+					target = siblings[at - 1];
+					index = target.children.length;
+				} else if (op === 'outdent') {
+					if (!parent || parent.id === zoomGuid) return;
+					target = parentOf(parent);
+					index = childList(target).indexOf(parent) + 1;
+				} else {
+					index = at + (op === 'down' ? 1 : -1);
+					if (index < 0 || index >= siblings.length) return;
+				}
+
+				const ord = orderField();
+				if (!ord && (op === 'up' || op === 'down')) {
+					toast('Sort by a number property to reorder', 'Sibling order is stored in the number property the view is sorted by.');
+					return;
+				}
+				const kids = childList(target).filter(n => n !== node);
+				if (ord && !(followsOrder(siblings, ord) && followsOrder(kids, ord))) {
+					toast(`Sort by ${ord.label} to rearrange`, `The rows aren't in ${ord.label} order, so a new position wouldn't show.`);
+					return;
+				}
+				const writes = ord ? positionWrites(node, kids, index, ord) : [];
+
+				if (target !== parent) {
+					if (!writeParent(node, target)) {
+						toast("Couldn't move the page", 'The app refused the new parent.');
+						return;
+					}
+					notePending(node.id, 'parent', target ? target.id : null);
+				}
+				writes.forEach(({ node: n, value }) => {
+					n.record.prop(ord.id).set(value);
+					notePending(n.id, 'order', value);
+				});
+
+				// Shown at once rather than after the refresh, so a second key
+				// press works from the new place.
+				const from = childList(parent);
+				from.splice(from.indexOf(node), 1);
+				childList(target).splice(index, 0, node);
+				node.parentGuid = target ? target.id : null;
+				if (target && collapsed.has(target.id)) {
+					collapsed.delete(target.id);
+					localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+				}
+				followGuid = node.id;
+				clearTimeout(followTimer);
+				followTimer = setTimeout(() => { followGuid = null; }, 3000);
+				renderRows();
+			};
 
 			/**
 			 * Swap an element for a text input. Enter and blur commit, Escape cancels.
@@ -1566,7 +1817,7 @@ export class Plugin extends CollectionPlugin {
 				});
 			};
 
-			/** Descendants of a node, so the Parent picker can't offer a cycle. */
+			/** Descendants of a node, so the Sub-page of picker can't offer a cycle. */
 			const descendantsOf = (node) => {
 				const out = new Set();
 				const visit = n => n.children.forEach(child => {
@@ -1580,11 +1831,13 @@ export class Plugin extends CollectionPlugin {
 			/**
 			 * Candidates for a record-link field. A field pointing back at this
 			 * collection (`filter_colguid`) is answered from the records already
-			 * loaded; anything else has to be fetched from that collection.
+			 * loaded; anything else has to be fetched from that collection. For
+			 * sub-pages the row's own subtree is left out: it would make a cycle,
+			 * which setSubPageOf() refuses.
 			 */
 			const recordCandidates = async (field, node) => {
 				if (!field.filter_colguid || field.filter_colguid === collectionGuid()) {
-					const banned = descendantsOf(node);
+					const banned = field.id === SUBPAGE ? descendantsOf(node) : new Set();
 					return [...hierarchy.nodes.values()]
 						.filter(n => n.id !== node.id && !banned.has(n.id))
 						.map(n => ({ guid: n.id, name: n.name }));
@@ -1643,7 +1896,7 @@ export class Plugin extends CollectionPlugin {
 					// where the app's cycle and same-collection checks live. Every
 					// other record field is a plain property write.
 					const link = (guid) => {
-						if (field.id === 'parent_page') record.setSubPageOf(guid);
+						if (field.id === SUBPAGE) record.setSubPageOf(guid);
 						else prop().set(guid);
 					};
 					recordCandidates(field, node).then(candidates => {
@@ -1917,6 +2170,10 @@ export class Plugin extends CollectionPlugin {
 				$topPad = $bottomPad = null;
 				win = { start: 0, end: 0 };
 				rows = hierarchy ? flatten() : [];
+				if (followGuid) {
+					const at = rows.findIndex(r => r.node.id === followGuid);
+					if (at !== -1) selectedIndex = at;
+				}
 
 				if (rows.length === 0) {
 					const $empty = document.createElement('div');
@@ -2543,6 +2800,9 @@ export class Plugin extends CollectionPlugin {
 				onRefresh: ({ records }) => {
 					lastRecords = records;
 					takeZoomHandoff();
+					// Mid-move: the screen already shows the result; skip the
+					// in-between states (see `pending`).
+					if (pending.size && !settled(records)) return;
 					rebuild();
 				},
 
@@ -2645,6 +2905,14 @@ export class Plugin extends CollectionPlugin {
 						return;
 					}
 
+					// R or F2 renames, as on a native card (the bundle's `SH`).
+					if ((e.key === 'r' || e.key === 'R' || e.key === 'F2')
+						&& !e.metaKey && !e.ctrlKey && !e.altKey) {
+						e.preventDefault();
+						startNameEdit(current.node, false);
+						return;
+					}
+
 					if (e.key === 'Enter' && e.shiftKey) {
 						e.preventDefault();
 						createRecord();
@@ -2682,6 +2950,20 @@ export class Plugin extends CollectionPlugin {
 						return;
 					}
 
+					// The editor's line keys, on rows: Tab / Shift+Tab indent and
+					// outdent, ⌘⇧↑ / ⌘⇧↓ move among siblings.
+					if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+						e.preventDefault();
+						rearrange(e.shiftKey ? 'outdent' : 'indent');
+						return;
+					}
+					if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey
+						&& (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+						e.preventDefault();
+						rearrange(e.key === 'ArrowDown' ? 'down' : 'up');
+						return;
+					}
+
 					// ⌘/Ctrl + ↑/↓, kept alongside Thymer's fold keys: ↓ opens a
 					// folded node and moves down (onto its first child), or just moves
 					// down. ↑ closes an open node; with nothing to close it folds the
@@ -2709,16 +2991,6 @@ export class Plugin extends CollectionPlugin {
 					}
 
 					switch (e.key) {
-						case 'Tab':
-							// Only plain Tab is row navigation. The native card handler
-							// normalizes the event first, and its switch has no
-							// "Shift+Tab" case, so that one falls through with no
-							// preventDefault and the browser's own focus order takes
-							// over — which is why native Shift+Tab looks erratic.
-							if (e.shiftKey) return;
-							e.preventDefault();
-							selectNext(1);
-							break;
 						case 'ArrowDown':
 							e.preventDefault();
 							selectNext(1);

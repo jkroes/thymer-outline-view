@@ -2,8 +2,8 @@
 
 An **Outline** view for [Thymer](https://thymer.com) collections: your records as an
 indented, collapsible tree instead of a flat list, with the look and keys of Thymer's
-own List view. It works on any collection that nests, through a single-value property that links
-back to the same collection (a "Parent" property, or Thymer's sub-pages). Your records
+own List view. It nests pages through Thymer's sub-pages ("Sub-page of"), which also
+keeps child pages out of their parent's Backlinks. Your records
 and properties stay exactly as they are; the view only changes how they're shown, and
 writes only when you edit something from it.
 
@@ -26,18 +26,17 @@ provides the page features.
 
 | Button | What it does |
 |---|---|
-| Install | Turns on **sub-pages** if the collection has no way to nest, adds an Outline view, and writes the view's code. Sub-pages keep child pages out of their parent's Backlinks. |
-| Repair | Brings the views back in step with your properties (see [one view per property](#one-view-per-nesting-property)). Leaves each view's name, columns and sort alone. |
+| Install | Turns on **sub-pages**, adds an Outline view, and writes the view's code. |
+| Repair | Puts back whichever of those is missing: sub-pages, the Outline view, or the code. |
 | Update | Replaces an older version of the view's code. |
-| Remove | Takes the Outline views and their code out again. |
+| Remove | Takes the Outline view and its code out again. |
 
 The installer never overwrites code it didn't write. Thymer gives each collection one
 plugin, so a collection that already has code of its own (formulas, a custom record
 title) is flagged, and Install opens the code editor with the view loaded so you can
 merge the two yourself. Nothing is saved until you save.
 
-**By hand** instead: add a single-value record property linking to the collection
-itself (or turn on sub-pages), add a view of type **Custom** (any name), then paste [`dist/plugin.js`](dist/plugin.js) into the
+**By hand** instead: turn on sub-pages, add a view of type **Custom** (any name), then paste [`dist/plugin.js`](dist/plugin.js) into the
 collection's plugin code and save.
 
 Other devices pick the view up after a reload (⌘R).
@@ -149,43 +148,38 @@ Most keys are the List view's own. The differences:
 | Fold and zoom | Thymer's own shortcuts (above). |
 | `⌘↑` `⌘↓` | Fold or unfold the selected row. On a row with nothing to fold, `⌘↑` folds its parent and moves there; `⌘↓` always moves down a row, unfolding first if the row is folded, so it lands on the first child. |
 | `E` | Edit the selected record's fields (above). |
+| `Tab` `⇧Tab` | Indent the selected row under the row above it, or outdent it to follow its parent. Changes the page's Sub-page of. |
+| `R` `F2` | Rename the selected row in place, as in List. |
+| Trash (`⌘⌫`) | Trash the selected page **and every page under it**, then select the next row. Your own key if you rebound Thymer's trash shortcut. Each page goes to the trash separately. |
+| `⌘⇧↑` `⌘⇧↓` | Move the selected row up or down among its siblings. Needs the view sorted by a number property (an *Order* field, say): that is where the position is stored, numbered 1, 2, 3… under each parent. Indent and outdent write it too when there is one. None of these work during a search. |
 | `Space` | Peek (above). |
 
 The rest work as in List: `Enter` opens, `⌘Enter` opens in the side panel, `Home` /
-`End`, `Tab`, `/` for the search box, click, `⌘`-click and `⇧`-click, and the `⋯` menu
+`End`, `/` for the search box, click, `⌘`-click and `⇧`-click, and the `⋯` menu
 on a hovered row.
 
-While the outline has focus, the status bar at the bottom of the window lists these
-keys in place of Thymer's usual hints: move, fold, fold level (cascade), fold all, open,
-peek, edit, new, zoom (and zoom out while zoomed), search. Fold and zoom hints show your
-own bindings, and an action with no key has no hint. During a peek it switches to the peek keys,
-**Esc** Exit Peek, **↵** Open, **↑↓** Browse, as Thymer's own views do. Hints that
-don't fit the window's width are left off the end.
+While the outline has focus, the status bar at the bottom of the window shows List's
+hints first, in its order and wording (search, peek, open, rename, open aside, create,
+trash), then the outline's own: edit, indent, outdent, reorder, zoom (and zoom out
+while zoomed), and last the folds: fold, fold children, fold descendants, fold level,
+fold all. Fold, zoom and trash hints show your own
+bindings, and an action with no key has no hint. During a peek it switches to the peek
+keys, **Esc** Exit Peek, **↵** Open, **↕ ↔** Browse, as Thymer's own views do.
+
+When the hints don't all fit the window's width, a **? More** hint leads the strip:
+press `?` to page to the hints that were cut off, and again to come back round to the
+start. To use another key, add `"plugin.outlinehints": "<key>"` to your custom keyboard
+shortcuts (⌘P → Change Keyboard Shortcuts).
 
 A few List features have no counterpart, because Thymer doesn't let plugins do them
-yet: dragging rows, move mode (`M`), **Custom Order** sorting, `⌥Enter` (new page
-above), and the trash shortcut. The sort you pick resets when you leave the view, as it
+yet: dragging rows, move mode (`M`), **Custom Order** sorting, and `⌥Enter` (new page
+above). The sort you pick resets when you leave the view, as it
 does for every custom view.
-
-### One view per nesting property
-
-A collection can nest in more than one way: a Parent property, and say a "Reports to"
-property linking to the same collection. Each is its own tree, and Install gives each
-its own view, side by side in the view tabs. The Parent (or sub-page) view is called
-**Outline**, the others **Outline: Reports to** and so on, and each keeps its own
-columns, sort and folds. The page features follow the collection's first Outline view.
-
-Only a property that holds **one** link qualifies. Several links would give a record
-several parents, which isn't a tree.
-
-The property decides whether its view exists: Repair brings back a view you deleted, and
-removes a view whose property you deleted. If a view's property is gone before you run
-Repair, the view lists its records flat and says why above the rows.
 
 ## Turning it off
 
 Run **Outline: install into a collection…** and press **Remove**, or delete the Outline
-view and the collection's plugin code yourself. Your records and parent links are
+view and the collection's plugin code yourself. Your records and sub-pages are
 untouched. Remove leaves alone any Custom views you made yourself. Without an Outline
 view, the collection's pages lose the breadcrumb and commands too.
 
@@ -194,9 +188,11 @@ view, the collection's pages lose the breadcrumb and commands too.
 1. **Thymer hands the view its records.** A Custom view receives the collection's
    records already sorted and filtered by Thymer's own toolbar, so sort, filters and
    search are Thymer's. The view draws the tree from that list.
-2. **It follows each record's parent link** to place it under its parent. A record
-   whose parent isn't in the list becomes a top-level row, and records caught in a loop
-   of parents are shown at the top level rather than disappearing.
+2. **It follows each record's Sub-page of link** to place it under its parent. A record
+   whose parent isn't in the list becomes a top-level row. Thymer refuses a loop of
+   parents when you nest a page in the app, but an edit made outside it (the Markdown
+   Mirror, say) can still create one; those pages show at the top level rather than
+   disappearing.
 3. **It puts search results back in context.** Thymer's search returns the matching
    pages without their parents, and also returns pages *under* a match. The view walks
    up from each result to restore the path, then checks each name against your search
@@ -209,9 +205,6 @@ view, the collection's pages lose the breadcrumb and commands too.
    Thymer's, which are hidden only while the outline has focus.
 5. **It draws only what's on screen.** Rows outside the visible area aren't built until
    you scroll to them, so a collection with thousands of records stays quick.
-6. **Each view remembers its property** in the view's own settings, which is why it
-   syncs and survives renaming the view.
-
 [`CLAUDE.md`](CLAUDE.md) has the full implementation notes, including the Thymer
 behavior this relies on that isn't in the plugin docs. Read it before changing the code.
 
