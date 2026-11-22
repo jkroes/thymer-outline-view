@@ -4,7 +4,7 @@
  * The view itself is a CollectionPlugin, so it has to live in each collection's
  * own plugin slot (global plugins can't register views). This plugin installs it
  * — walks your collections, shows what state each one is in, and does the three
- * steps for you: add a Parent property if the collection can't nest yet, add a
+ * steps for you: turn on sub-pages if the collection can't nest yet, add a
  * Custom view, write the view's code — and, on every page of a collection with an
  * Outline view, adds the hierarchy features that work outside the view:
  *
@@ -36,15 +36,16 @@ const STUB = 'class Plugin extends CollectionPlugin {\n  onLoad() {\n    // Put 
 const SIGNATURE = 'registerOutlineView';
 
 /**
- * The nesting property install() adds to a collection that has none: a visible,
- * single-value record link back to the same collection. Not sub-pages, which hide
- * the link and only show one level up. The id is made fresh per collection.
+ * The nesting property install() adds to a collection that has none: sub-pages,
+ * i.e. the field collection.enableSubPages(true) appends. Preferred over a
+ * hand-made Parent because Thymer leaves a page whose only link is `parent_page`
+ * out of its Backlinks section, so children don't crowd their parent's backlinks.
+ * Added through the config rather than enableSubPages() so it lands in the same
+ * single save as the view (see install()).
  */
-const parentField = (collectionGuid) => ({
-	icon: 'ti-list-tree', id: 'f' + Array.from(crypto.getRandomValues(new Uint8Array(14)),
-		(b) => '0123456789ABCDEFGHJKMNPQRSTVWXYZ'[b % 32]).join(''),
-	label: 'Parent', many: false, read_only: false, active: true, type: 'record',
-	filter_colguid: collectionGuid,
+const subPageField = (collectionGuid) => ({
+	id: 'parent_page', label: 'Sub-page of', many: false, read_only: false,
+	active: true, type: 'record', filter_colguid: collectionGuid,
 });
 
 const SUBPAGE = 'parent_page';
@@ -358,16 +359,16 @@ class Plugin extends AppPlugin {
 
 		// Nesting is provisioned only when the collection has NO way to nest at
 		// all. A collection that already nests through a property of its own is
-		// left alone — adding Parent there would invent a second hierarchy and
-		// a second view nobody asked for.
+		// left alone — turning on sub-pages there would invent a second hierarchy
+		// and a second view nobody asked for.
 		const needsNesting = !hierarchyCandidates(api).length;
 		if (needsNesting) {
-			log('Adding a Parent property...');
-			conf.fields = (conf.fields || []).concat([parentField(guid)]);
+			log('Turning on sub-pages...');
+			conf.fields = (conf.fields || []).concat([subPageField(guid)]);
 		}
 
 		// Reconcile against the config being built, not the live one: with
-		// Parent just appended above, it is a candidate for this save even though
+		// sub-pages just turned on above, it is a candidate for this save even though
 		// the collection does not have it yet.
 		const pending = { getGuid: () => guid, getConfiguration: () => conf };
 		const plan = this.plan(pending);
@@ -898,7 +899,7 @@ class Plugin extends AppPlugin {
 
 		const h = el('h2', wrap, 'Install the Outline view');
 		h.style.cssText = 'margin:0 0 4px;';
-		const sub = el('p', wrap, 'Pick a collection. Installing adds a Parent property if the collection has no way to nest, adds a Custom view, and writes the view code.');
+		const sub = el('p', wrap, 'Pick a collection. Installing turns on sub-pages if the collection has no way to nest, adds a Custom view, and writes the view code.');
 		sub.style.cssText = 'margin:0 0 20px;opacity:.7;';
 
 		let collections = [];

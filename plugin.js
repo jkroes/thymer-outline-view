@@ -480,12 +480,12 @@ export class Plugin extends CollectionPlugin {
 				collapsed = new Set();
 			}
 			/**
-			 * While a search or filter is on, the nodes that are open — and only
+			 * While search text is on, the nodes that are open — and only
 			 * those: it replaces `collapsed` rather than adding to it. Seeded with
 			 * every node that has a match below it, so the tree opens down to the
 			 * deepest match and no further. Folding by hand edits this set, not the
 			 * saved collapse state, so a search never rearranges the normal tree.
-			 * Null when no filter is on.
+			 * Null with no search text, even under a filter.
 			 */
 			let searchOpen = null;
 			/** What `searchOpen` was seeded for, so a refresh mid-search keeps the user's folds. */
@@ -1366,17 +1366,22 @@ export class Plugin extends CollectionPlugin {
 				}
 				hierarchy = buildHierarchy(completed.records, parentFieldId);
 				const { matches, query } = findMatches(scoped);
-				// Ancestors put back mean the app narrowed the set; so does any
-				// search text, even when every match happens to be a root.
-				if (completed.added.size || query) {
-					contextGuids = new Set(completed.records.map(r => r.guid).filter(g => !matches.has(g)));
+				// Ancestors put back mean the app narrowed the set, so they are
+				// dimmed as context. But only search text swaps the saved folds
+				// for search folds: a view's saved filter (say, one kind of page
+				// whose parents are another kind) narrows the set for good, and
+				// treating that as a search left the view fully unfolded on every
+				// visit with no fold ever saved.
+				contextGuids = completed.added.size || query
+					? new Set(completed.records.map(r => r.guid).filter(g => !matches.has(g)))
+					: new Set();
+				if (query) {
 					const key = `${zoomGuid}|${query}|${[...matches].sort().join(',')}`;
 					if (key !== searchKey || !searchOpen) {
 						searchOpen = openToMatches(matches);
 						searchKey = key;
 					}
 				} else {
-					contextGuids = new Set();
 					searchOpen = null;
 					searchKey = null;
 				}

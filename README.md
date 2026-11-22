@@ -26,7 +26,7 @@ provides the page features.
 
 | Button | What it does |
 |---|---|
-| Install | Adds a **Parent** property if the collection has no way to nest, adds an Outline view, and writes the view's code. |
+| Install | Turns on **sub-pages** if the collection has no way to nest, adds an Outline view, and writes the view's code. Sub-pages keep child pages out of their parent's Backlinks. |
 | Repair | Brings the views back in step with your properties (see [one view per property](#one-view-per-nesting-property)). Leaves each view's name, columns and sort alone. |
 | Update | Replaces an older version of the view's code. |
 | Remove | Takes the Outline views and their code out again. |

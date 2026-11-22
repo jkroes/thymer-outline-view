@@ -998,15 +998,14 @@ var plugins = (() => {
           }
           hierarchy = buildHierarchy(completed.records, parentFieldId);
           const { matches, query } = findMatches(scoped);
-          if (completed.added.size || query) {
-            contextGuids = new Set(completed.records.map((r) => r.guid).filter((g) => !matches.has(g)));
+          contextGuids = completed.added.size || query ? new Set(completed.records.map((r) => r.guid).filter((g) => !matches.has(g))) : /* @__PURE__ */ new Set();
+          if (query) {
             const key = `${zoomGuid}|${query}|${[...matches].sort().join(",")}`;
             if (key !== searchKey || !searchOpen) {
               searchOpen = openToMatches(matches);
               searchKey = key;
             }
           } else {
-            contextGuids = /* @__PURE__ */ new Set();
             searchOpen = null;
             searchKey = null;
           }
