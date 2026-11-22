@@ -2,17 +2,23 @@
 
 An **Outline** view for [Thymer](https://thymer.com) collections: your records as an
 indented, collapsible tree instead of a flat list, with the look and keys of Thymer's
-own List view. It works on any collection that nests, either with sub-pages or with a
-property that links back to the same collection. Your records and properties stay
-exactly as they are; the view only changes how they're shown, and writes only when you
-edit something from it.
+own List view. It works on any collection that nests, through a single-value property that links
+back to the same collection (a "Parent" property, or Thymer's sub-pages). Your records
+and properties stay exactly as they are; the view only changes how they're shown, and
+writes only when you edit something from it.
+
+The plugin's global half also follows you onto every page of those collections: a
+breadcrumb of the page's ancestors above its title, and commands to show the
+page in the outline, add a child or sibling page, or move the page somewhere else. See
+[On every page](#on-every-page).
 
 ## Install
 
-The easy way is the installer, a small global plugin that sets the view up in any
-collection for you.
+Install the global plugin, which sets the view up in any collection for you and
+provides the page features.
 
-1. In Thymer, open the command palette (⌘P), choose **Plugins → Create Plugin**.
+1. In Thymer, open the command palette (⌘P), choose **Plugins → Create Plugin**, and
+   name it **Outline**.
 2. Open **Edit Code → Custom Code**, paste the contents of
    [`installer/dist/plugin.js`](installer/dist/plugin.js), and save.
 3. Open ⌘P → **Outline: install into a collection…**. A panel lists your collections,
@@ -20,7 +26,7 @@ collection for you.
 
 | Button | What it does |
 |---|---|
-| Install | Turns on sub-pages if the collection has no way to nest, adds an Outline view, and writes the view's code. |
+| Install | Adds a **Parent** property if the collection has no way to nest, adds an Outline view, and writes the view's code. |
 | Repair | Brings the views back in step with your properties (see [one view per property](#one-view-per-nesting-property)). Leaves each view's name, columns and sort alone. |
 | Update | Replaces an older version of the view's code. |
 | Remove | Takes the Outline views and their code out again. |
@@ -30,19 +36,56 @@ plugin, so a collection that already has code of its own (formulas, a custom rec
 title) is flagged, and Install opens the code editor with the view loaded so you can
 merge the two yourself. Nothing is saved until you save.
 
-**By hand** instead: turn on sub-pages in the collection's settings, add a view of type
-**Custom** (any name), then paste [`dist/plugin.js`](dist/plugin.js) into the
+**By hand** instead: add a single-value record property linking to the collection
+itself (or turn on sub-pages), add a view of type **Custom** (any name), then paste [`dist/plugin.js`](dist/plugin.js) into the
 collection's plugin code and save.
 
 Other devices pick the view up after a reload (⌘R).
+
+## On every page
+
+On any page of a collection with an Outline view:
+
+- **Breadcrumb.** The page's ancestors appear after the collection name above the
+  title: the top-level page, then the last two. Levels in between fold into a **…**
+  menu. Click a level to open it, or ⌘-click to open it in the side panel.
+- **Commands** in the palette (⌘P), each one bindable to a key in ⌘P → Change Keyboard
+  Shortcuts:
+
+| Command | What it does | Shortcut action |
+|---|---|---|
+| Outline: Show this page | Opens the Outline view zoomed into this page, with its row selected so the arrow keys work right away. Zoom Out steps out to its siblings. | `plugin.outlineshow` |
+| Outline: New child page… | Asks for a title and creates a page under this one. | `plugin.outlinenewchild` |
+| Outline: New sibling page… | The same, next to this page. | `plugin.outlinenewsibling` |
+| Outline: Move page under… | Picks a new parent from a list that shows each page's path, so same-named pages are easy to tell apart. Leaves out this page's own branch. | `plugin.outlinemove` |
+
+Nothing extra is stored: the breadcrumb and the commands read the parent links as they
+go.
 
 ## What's different from the native List view
 
 ### Records nest under their parents
 
 Each record sits under its parent, with a toggle to fold or unfold its children.
-Records with no parent are the top level. Folds are remembered on each device, and
-**⌘/** folds or unfolds the whole tree at once.
+Records with no parent are the top level. Folds are remembered on each device.
+
+### Thymer's fold and zoom keys
+
+The outline answers to Thymer's own fold and zoom shortcuts, on the keys you've
+bound them to in ⌘P → Change Keyboard Shortcuts, or Thymer's defaults if you haven't.
+Each does to the selected row what it does to the line under the caret in a page:
+
+| Shortcut action | In the outline |
+|---|---|
+| `nav.toggleFold` | Fold or unfold the selected row. |
+| `nav.foldChildren`, `nav.unfoldChildren`, `nav.toggleFoldChildren` | The same for each of the row's children. |
+| `nav.foldDescendants`, `nav.unfoldDescendants`, `nav.toggleFoldDescendants` | The same for everything under the row. |
+| `nav.foldContainer`, `nav.unfoldContainer`, `nav.toggleFoldContainer` | The whole tree (or the zoomed branch). |
+| `nav.foldCascade` | Fold the deepest open level under the row. On a row with nothing open, fold at its parent and move there. |
+| `nav.unfoldCascade` | Unfold one more level under the row. |
+| `panel.zoom_in`, `panel.zoom_out` | Zoom into the selected row, or step back out (below). |
+
+Change a binding and the outline follows it, status-bar hints included.
 
 ### Search shows where each match lives
 
@@ -59,10 +102,11 @@ folded the way you left it.
 
 ### Zoom into a branch
 
-Press **Z** to show only the selected record and everything under it. A bar above the
+Press Zoom In (`panel.zoom_in`, ⌥↓ by default) to show only the selected record and everything under it. A bar above the
 rows shows the path to it; click any step to zoom there, or **All** for the whole
-collection. **⇧Z** steps out one level. While zoomed, search looks only inside the
-branch, at any depth.
+collection. Zoom Out (⌥↑) steps out one level. While zoomed, search looks only inside the
+branch, at any depth. Zooming into a folded record opens it while you're zoomed in; zoom back out and
+it's folded again, as in the editor.
 
 ### Properties on the row
 
@@ -102,9 +146,8 @@ Most keys are the List view's own. The differences:
 |---|---|
 | `↑` `↓` | Move between rows. `↑` from the top row goes up to the search box, as in List. |
 | `←` `→` | Also move between rows, wrapping at either end. |
-| `⌘↑` `⌘↓` | Fold or unfold the selected row. On a row with nothing to fold, `⌘↑` jumps to its parent. |
-| `⌘/` | Fold or unfold the whole tree. |
-| `Z` / `⇧Z` | Zoom into the selected record / step back out. |
+| Fold and zoom | Thymer's own shortcuts (above). |
+| `⌘↑` `⌘↓` | Fold or unfold the selected row. On a row with nothing to fold, `⌘↑` folds its parent and moves there; `⌘↓` always moves down a row, unfolding first if the row is folded, so it lands on the first child. |
 | `E` | Edit the selected record's fields (above). |
 | `Space` | Peek (above). |
 
@@ -113,8 +156,9 @@ The rest work as in List: `Enter` opens, `⌘Enter` opens in the side panel, `Ho
 on a hovered row.
 
 While the outline has focus, the status bar at the bottom of the window lists these
-keys in place of Thymer's usual hints: move, fold, open, peek, edit, new, zoom
-(and zoom out while zoomed), search. During a peek it switches to the peek keys,
+keys in place of Thymer's usual hints: move, fold, fold level (cascade), fold all, open,
+peek, edit, new, zoom (and zoom out while zoomed), search. Fold and zoom hints show your
+own bindings, and an action with no key has no hint. During a peek it switches to the peek keys,
 **Esc** Exit Peek, **↵** Open, **↑↓** Browse, as Thymer's own views do. Hints that
 don't fit the window's width are left off the end.
 
@@ -125,10 +169,11 @@ does for every custom view.
 
 ### One view per nesting property
 
-A collection can nest in more than one way: sub-pages, and say a "Reports to" property
-linking to the same collection. Each is its own tree, and Install gives each its own
-view, side by side in the view tabs. The sub-page view is called **Outline**, the others
-**Outline: Reports to** and so on, and each keeps its own columns, sort and folds.
+A collection can nest in more than one way: a Parent property, and say a "Reports to"
+property linking to the same collection. Each is its own tree, and Install gives each
+its own view, side by side in the view tabs. The Parent (or sub-page) view is called
+**Outline**, the others **Outline: Reports to** and so on, and each keeps its own
+columns, sort and folds. The page features follow the collection's first Outline view.
 
 Only a property that holds **one** link qualifies. Several links would give a record
 several parents, which isn't a tree.
@@ -140,9 +185,9 @@ Repair, the view lists its records flat and says why above the rows.
 ## Turning it off
 
 Run **Outline: install into a collection…** and press **Remove**, or delete the Outline
-view and the collection's plugin code yourself. Your records, sub-pages and parent links
-are untouched; turning sub-pages back on later (if you turned them off) brings every
-parent back. Remove leaves alone any Custom views you made yourself.
+view and the collection's plugin code yourself. Your records and parent links are
+untouched. Remove leaves alone any Custom views you made yourself. Without an Outline
+view, the collection's pages lose the breadcrumb and commands too.
 
 ## How it works (for the curious)
 

@@ -149,6 +149,162 @@ function hierarchyCandidates(fields, collectionGuid) {
 		&& (field.id === 'parent_page' || field.filter_colguid === collectionGuid));
 }
 
+// --- Thymer's fold and zoom shortcuts --------------------------------------
+//
+// The outline answers to Thymer's own fold and zoom actions on whatever keys
+// the user has them bound to. Plugins can't ask the app for its keymap, so it
+// is rebuilt here from the same two sources the app uses (bundle `Ix`, client
+// 1.0.20): the defaults below, then the account's custom shortcuts text for
+// this platform and runtime.
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+const KBD_SLOT = (IS_MAC ? 'mac' : 'win') + (window.thymerDesktopAPI ? '_electron' : '_web');
+
+/**
+ * The app's default keys for the actions the outline follows, action names
+ * lowercased as the app compares them. The rest have no default and stay
+ * unbound until the user binds them. ("Meta+Shift+?" never fires on a Mac:
+ * with ⌘ held the key arrives as "/". That's the app's bug, kept as is.)
+ */
+const DEFAULT_KEYS = IS_MAC ? {
+	'nav.togglefold': 'Meta+/',
+	'nav.togglefolddescendants': 'Meta+Shift+?',
+	'nav.foldchildren': 'Meta+,',
+	'nav.unfoldchildren': 'Meta+.',
+	'nav.foldcascade': 'Meta+Shift+,',
+	'nav.unfoldcascade': 'Meta+Shift+.',
+	'panel.zoom_out': 'Alt+ArrowUp',
+	'panel.zoom_in': 'Alt+ArrowDown',
+} : {
+	'nav.togglefold': 'Ctrl+/',
+	'nav.togglefolddescendants': 'Ctrl+Shift+?',
+	'nav.foldchildren': 'Ctrl+,',
+	'nav.unfoldchildren': 'Ctrl+.',
+	'nav.foldcascade': 'Ctrl+Shift+<',
+	'nav.unfoldcascade': 'Ctrl+Shift+>',
+	'panel.zoom_out': 'Alt+ArrowUp',
+	'panel.zoom_in': 'Alt+ArrowDown',
+};
+for (const action of ['nav.unfolddescendants', 'nav.folddescendants', 'nav.togglefoldchildren',
+	'nav.foldcontainer', 'nav.unfoldcontainer', 'nav.togglefoldcontainer']) {
+	DEFAULT_KEYS[action] = '';
+}
+
+const KEY_MODIFIERS = ['Meta', 'Ctrl', 'Alt', 'Shift'];
+const NAMED_KEYS = ['Escape', 'Enter', 'Tab', 'Space', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft',
+	'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10',
+	'F11', 'F12', 'NumpadEnter', 'Insert'];
+
+/** The bundle's `r$`: a binding as typed ("shift+meta+k" → "Meta+Shift+K"), or null when invalid. */
+function normalizeKey(s) {
+	const parts = s.split('+').map(p => p.trim());
+	if (parts.some(p => !p)) return null;
+	const mods = new Set();
+	for (const p of parts.slice(0, -1)) {
+		const m = KEY_MODIFIERS.find(k => k.toLowerCase() === p.toLowerCase());
+		if (!m) return null;
+		mods.add(m);
+	}
+	let key = parts[parts.length - 1];
+	if (/\p{So}/u.test(key)) return null;
+	if (key.length === 1) key = key.toUpperCase();
+	else key = { copy: 'C', cut: 'X', paste: 'V' }[key.toLowerCase()] || NAMED_KEYS.find(k => k.toLowerCase() === key.toLowerCase());
+	return key ? [...KEY_MODIFIERS.filter(m => mods.has(m)), key].join('+') : null;
+}
+
+/** Punctuation by physical key, plain and shifted (the bundle's `RY` / `$Y`). */
+const CODE_KEYS = {
+	Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'", Backquote: '`',
+	Backslash: '\\', Comma: ',', Period: '.', Slash: '/',
+};
+const SHIFTED_CODE_KEYS = {
+	Minus: '_', Equal: '+', BracketLeft: '{', BracketRight: '}', Semicolon: ':', Quote: '"', Backquote: '~',
+	Backslash: '|', Comma: '<', Period: '>', Slash: '?',
+};
+
+/**
+ * A key event as the app names it (the bundle's `zi`). A printable ASCII key
+ * is taken as typed; anything else (⌥/ types "÷" on a Mac) is named by its
+ * physical key instead, which is how "Alt+/" can match at all.
+ */
+function eventKeyName(e) {
+	if (e.isComposing || e.key === 'Dead') return '';
+	const mods = (e.metaKey ? 'Meta+' : '') + (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '');
+	if (e.code === 'BracketLeft') return mods + '[';
+	if (e.code === 'BracketRight') return mods + ']';
+	if (e.code === 'Space') return mods + 'Space';
+	if (!e.key || e.key.length !== 1) return mods + e.key;
+	const c = e.key.charCodeAt(0);
+	if (c >= 32 && c <= 126) return mods + e.key.toUpperCase();
+	let k = /^Key([A-Z])$/.exec(e.code)?.[1];
+	const digit = /^Digit(\d)$/.exec(e.code)?.[1];
+	if (digit) k = e.shiftKey ? ')!@#$%^&*('[Number(digit)] : digit;
+	k ??= (e.shiftKey ? SHIFTED_CODE_KEYS : CODE_KEYS)[e.code];
+	return mods + (k || e.key.toUpperCase());
+}
+
+/** The custom shortcuts text as `{action, key}` entries, or null if it has an error (the app then ignores all of it). */
+function parseShortcuts(source) {
+	const entries = [];
+	if (/^\{\s*\}$/.test(source.trim())) return entries;
+	for (const raw of source.split('\n')) {
+		const line = raw.trim();
+		if (!line || line.startsWith('//') || line === '{' || line === '}') continue;
+		const m = line.match(/^(?:"(?<action>[^"]*)"|'(?<action>[^']*)')\s*:\s*(?:"(?<key>[^"]*)"|'(?<key>[^']*)')\s*,?/);
+		const rest = m && line.slice(m[0].length).trim();
+		if (!m || (rest && !rest.startsWith('//'))) return null;
+		const { action, key } = m.groups;
+		if (!action && !key) return null;
+		if (action && !action.includes('.')) return null;
+		const normalized = key ? normalizeKey(key) : '';
+		if (normalized === null) return null;
+		entries.push({ action: action.toLowerCase(), key: normalized });
+	}
+	return entries;
+}
+
+let keymapSource = null;
+let keymap = null;
+
+/**
+ * The fold and zoom actions on their current keys: `keys` maps action → key
+ * ('' when unbound), `byKey` the reverse. Each custom line rebinds an action,
+ * unbinds it (`"action": ""`), frees a key (`"": "key"`), or takes a key away
+ * from whatever had it. Re-read whenever the account's text changes.
+ */
+function foldKeymap() {
+	let root = window.g_focusedComponent;
+	while (root?.parent) root = root.parent;
+	const source = root?.sideBar?.activeUser?.acct_json?.kbd?.[KBD_SLOT] || '';
+	if (keymap && source === keymapSource) return keymap;
+	const keys = { ...DEFAULT_KEYS };
+	for (const { action, key } of parseShortcuts(source) || []) {
+		if (key) for (const a in keys) if (keys[a] === key && a !== action) keys[a] = '';
+		if (action in keys) keys[action] = key;
+	}
+	const byKey = new Map();
+	for (const a in keys) if (keys[a]) byKey.set(keys[a], a);
+	keymapSource = source;
+	keymap = { keys, byKey };
+	return keymap;
+}
+
+const KEY_GLYPHS = {
+	Space: 'Space', ArrowRight: '→', ArrowLeft: '←', Escape: 'Esc', Enter: '↵', Tab: '⇥', ArrowUp: '↑',
+	ArrowDown: '↓', PageUp: 'PgUp', PageDown: 'PgDn', Delete: 'Del', Backspace: IS_MAC ? '⌫' : 'Bksp',
+};
+
+/** A key as the status bar shows it: "Meta+Shift+," → ⌘⇧, on a Mac (the mac modifier glyphs in the app's own markup). */
+function keyLabel(key) {
+	if (!key) return '';
+	const parts = key.split('+');
+	const last = parts.pop();
+	const k = KEY_GLYPHS[last] || last;
+	if (!IS_MAC) return [...parts.map(m => m === 'Meta' ? 'Ctrl' : m), k].join('+');
+	const glyph = { Meta: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' };
+	return parts.map(m => `<span class="kbdmod kbdmod-mac">${glyph[m]}</span>`).join('') + k;
+}
+
 /** Set on <body> while an Outline view has focus; swaps in the view's key hints. */
 const KEYS_BODY_CLASS = 'plg-outline-keys';
 
@@ -162,6 +318,8 @@ function keyHintsHtml(peeking, zoomed) {
 	const mod = (sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`;
 	const cmd = mod('⌘', 'Ctrl');
 	const shift = mod('⇧', 'Shift');
+	const { keys } = foldKeymap();
+	const cascade = [keys['nav.foldcascade'], keys['nav.unfoldcascade']].filter(Boolean).map(keyLabel).join(' ');
 	// While peeking, the set the app's own views show then (getPeekStatusBarContext).
 	const hints = peeking ? [
 		['Esc', 'Exit Peek'],
@@ -169,18 +327,20 @@ function keyHintsHtml(peeking, zoomed) {
 		['↑↓', 'Browse'],
 	] : [
 		['↑↓', 'Move'],
-		[`${cmd}↑↓`, 'Fold'],
-		[`${cmd}/`, 'Fold all'],
+		[keyLabel(keys['nav.togglefold']), 'Fold'],
+		[cascade, 'Fold level'],
+		[keyLabel(keys['nav.togglefoldcontainer']), 'Fold all'],
 		['↵', 'Open'],
 		[`${cmd}↵`, 'Open aside'],
 		['Space', 'Peek'],
 		['E', 'Edit'],
 		[`${shift}↵`, 'New'],
-		['Z', 'Zoom'],
-		...(zoomed ? [[`${shift}Z`, 'Zoom out']] : []),
+		[keyLabel(keys['panel.zoom_in']), 'Zoom'],
+		...(zoomed ? [[keyLabel(keys['panel.zoom_out']), 'Zoom out']] : []),
 		['/', 'Search'],
 	];
-	return hints.map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
+	// An action with no key has no hint.
+	return hints.filter(([k]) => k).map(([k, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${k}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join('');
 }
 
 export class Plugin extends CollectionPlugin {
@@ -203,7 +363,13 @@ export class Plugin extends CollectionPlugin {
 	 * own hints there. One item per plugin, shared by every view instance.
 	 */
 	showKeyHints(on, peeking = false, zoomed = false) {
-		const state = `${peeking}|${zoomed}`;
+		// The keymap object is replaced whenever the user's shortcuts change.
+		const map = foldKeymap();
+		if (map !== this.keysMap) {
+			this.keysMap = map;
+			this.keysEpoch = (this.keysEpoch || 0) + 1;
+		}
+		const state = `${peeking}|${zoomed}|${this.keysEpoch}`;
 		if (on && !this.keysItem) {
 			this.keysState = state;
 			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking, zoomed) });
@@ -460,7 +626,13 @@ export class Plugin extends CollectionPlugin {
 
 			// --- data ----------------------------------------------------------
 
-			const isExpanded = (node) => searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id);
+			/**
+			 * The zoom root always shows open, without touching its saved fold,
+			 * so zooming out finds it folded or not as it was — as the editor's
+			 * zoom does. It can't be folded while zoomed (nor can the editor's).
+			 */
+			const isExpanded = (node) => node.id === zoomGuid
+				|| (searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id));
 
 			/** Properties the view is configured to show, minus what the row renders itself. */
 			const visibleFields = () => {
@@ -562,6 +734,7 @@ export class Plugin extends CollectionPlugin {
 			};
 
 			const toggle = (node) => {
+				if (node.id === zoomGuid) return;
 				if (searchOpen) {
 					if (searchOpen.has(node.id)) searchOpen.delete(node.id);
 					else searchOpen.add(node.id);
@@ -576,26 +749,157 @@ export class Plugin extends CollectionPlugin {
 				setSelection(restored === -1 ? 0 : restored);
 			};
 
-			/** Fold or unfold the whole tree: collapse all if anything is open. */
-			const toggleAll = () => {
-				const expandable = [];
-				const visit = (node) => {
-					if (node.children.length) expandable.push(node);
-					node.children.forEach(visit);
-				};
-				hierarchy.rootNodes.forEach(visit);
-				if (!expandable.length) return;
-				const close = expandable.some(isExpanded);
-				if (searchOpen) {
-					expandable.forEach(node => close ? searchOpen.delete(node.id) : searchOpen.add(node.id));
-				} else {
-					expandable.forEach(node => close ? collapsed.add(node.id) : collapsed.delete(node.id));
-					localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+			// --- Thymer's fold and zoom actions --------------------------------
+			//
+			// Each mirrors the app's editor action of the same name (bundle
+			// `ze.prototype` fold methods, read 2026-11-21), with the selected row
+			// standing in for the line under the caret and the whole tree (or the
+			// zoomed branch) for the page.
+
+			const canFold = (node) => node.children.length > 0;
+
+			/** Fold or unfold each node that has children; a search's folds stay temporary. */
+			const setFolded = (nodes, fold) => {
+				for (const node of nodes) {
+					if (!canFold(node) || node.id === zoomGuid) continue;
+					if (searchOpen) {
+						if (fold) searchOpen.delete(node.id);
+						else searchOpen.add(node.id);
+					} else if (fold) collapsed.add(node.id);
+					else collapsed.delete(node.id);
 				}
-				const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
+				if (!searchOpen) localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+			};
+
+			const nodesUnder = (node) => {
+				const out = [];
+				const visit = (n) => n.children.forEach(child => { out.push(child); visit(child); });
+				visit(node);
+				return out;
+			};
+
+			/** The app's `ci`: fold, unfold, or toggle a set — toggle folds all if any is open. */
+			const foldSet = (nodes, op) => {
+				const foldable = nodes.filter(canFold);
+				if (!foldable.length) return;
+				setFolded(foldable, op === 'toggle' ? foldable.some(isExpanded) : op === 'fold');
+			};
+
+			/**
+			 * The app's `Jc`, one step of a cascade under `node`. Folding closes
+			 * the deepest open level that is showing; unfolding opens the
+			 * shallowest-from-the-bottom level that is shut. Repeat to go on.
+			 */
+			const cascade = (node, op) => {
+				const levels = [[node]];
+				const walk = (n, depth) => {
+					if (!isExpanded(n)) return;
+					n.children.forEach(child => {
+						(levels[depth + 1] ??= []).push(child);
+						walk(child, depth + 1);
+					});
+				};
+				walk(node, 0);
+				if (op === 'fold') {
+					for (let d = levels.length - 2; d >= 0; d--) {
+						const open = levels[d].filter(n => canFold(n) && isExpanded(n));
+						if (open.length) return setFolded(open, true);
+					}
+				} else {
+					for (let d = levels.length - 1; d >= 0; d--) {
+						const shut = levels[d].filter(n => canFold(n) && !isExpanded(n));
+						if (shut.length) return setFolded(shut, false);
+					}
+				}
+			};
+
+			/** Redraw after a fold, keeping `guid` (or the selected row) selected. */
+			const refold = (guid) => {
+				const keep = guid || (rows[selectedIndex] ? rows[selectedIndex].node.id : null);
 				renderRows();
-				const restored = rows.findIndex(r => r.node.id === keepGuid);
+				const restored = rows.findIndex(r => r.node.id === keep);
 				setSelection(restored === -1 ? 0 : restored);
+			};
+
+			/** Run one of the actions in DEFAULT_KEYS on the selected row. */
+			const runAction = (action) => {
+				const current = rows[selectedIndex];
+				if (!current) return;
+				const node = current.node;
+				// The tree as a whole: the zoomed branch below its root, or everything.
+				const all = () => zoomGuid
+					? hierarchy.rootNodes.flatMap(nodesUnder)
+					: hierarchy.rootNodes.flatMap(root => [root, ...nodesUnder(root)]);
+				const [scope, op] = {
+					'nav.togglefold': ['item', 'toggle'],
+					'nav.foldchildren': ['children', 'fold'],
+					'nav.unfoldchildren': ['children', 'unfold'],
+					'nav.togglefoldchildren': ['children', 'toggle'],
+					'nav.folddescendants': ['descendants', 'fold'],
+					'nav.unfolddescendants': ['descendants', 'unfold'],
+					'nav.togglefolddescendants': ['descendants', 'toggle'],
+					'nav.foldcontainer': ['all', 'fold'],
+					'nav.unfoldcontainer': ['all', 'unfold'],
+					'nav.togglefoldcontainer': ['all', 'toggle'],
+				}[action] || [];
+				if (scope) {
+					foldSet({
+						item: () => [node],
+						children: () => node.children,
+						descendants: () => nodesUnder(node),
+						all,
+					}[scope](), op);
+					refold();
+					return;
+				}
+				if (action === 'nav.foldcascade') {
+					// A row with nothing open under it passes the fold to its
+					// parent, and the selection goes with it. At the top level the
+					// app folds every top-level line.
+					if (canFold(node) && isExpanded(node)) {
+						cascade(node, 'fold');
+						refold();
+					} else if (current.parent) {
+						cascade(current.parent, 'fold');
+						refold(current.parent.id);
+					} else {
+						setFolded(hierarchy.rootNodes.filter(isExpanded), true);
+						refold();
+					}
+					return;
+				}
+				if (action === 'nav.unfoldcascade') {
+					cascade(node, 'unfold');
+					refold();
+					return;
+				}
+				if (action === 'panel.zoom_in') {
+					zoomTo(node.id);
+				} else if (action === 'panel.zoom_out' && zoomGuid) {
+					const zoomed = hierarchy && hierarchy.nodes.get(zoomGuid);
+					const parent = zoomed ? zoomed.record.linkedRecord(hierarchyFieldId()) : null;
+					const from = zoomGuid;
+					zoomTo(parent ? parent.guid : null);
+					const back = rows.findIndex(r => r.node.id === from);
+					if (back !== -1) setSelection(back);
+				}
+			};
+
+			/**
+			 * Fold and zoom keys are taken before the app sees them: its window
+			 * handler runs the zoom actions itself (opening the record in place of
+			 * the view), so the view's own key hook would never get them.
+			 */
+			const onShortcutKey = (e) => {
+				if (!viewFocused || !$root || $menu || propMode || !rows.length) return;
+				const $focused = document.activeElement;
+				if ($focused && $focused !== document.body && !$root.contains($focused)) return;
+				if ($focused && $focused.classList && $focused.classList.contains('outline-inline-input')) return;
+				const action = foldKeymap().byKey.get(eventKeyName(e));
+				if (!action) return;
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				runAction(action);
 			};
 
 			/**
@@ -1091,8 +1395,8 @@ export class Plugin extends CollectionPlugin {
 			};
 
 			/**
-			 * Another plugin (Hierarchy's "Search under this page") opens this view
-			 * zoomed by leaving {collection, guid, search, at} on <html> just before
+			 * The global plugin ("Outline: Show this page") opens this view
+			 * zoomed by leaving {collection, guid, at} on <html> just before
 			 * navigating here. Taken once, and only while fresh, so a stale request
 			 * can't re-zoom a later visit.
 			 */
@@ -1106,7 +1410,6 @@ export class Plugin extends CollectionPlugin {
 				if (Date.now() - (req.at || 0) > 10000) return;
 				zoomGuid = req.guid || null;
 				selectedIndex = 0;
-				if (req.search) setTimeout(focusAppSearch, 50);
 			};
 
 			/** "Root › … › Zoomed" above the rows, each step re-zooming; × shows everything. */
@@ -1127,7 +1430,7 @@ export class Plugin extends CollectionPlugin {
 				$all.type = 'button';
 				$all.className = 'button-minimal button-small outline-zoom-step';
 				$all.textContent = 'All';
-				$all.title = 'Show the whole collection (⇧Z steps out)';
+				$all.title = 'Show the whole collection';
 				$all.addEventListener('click', () => zoomTo(null));
 				$zoom.appendChild($all);
 				chain.forEach((record, i) => {
@@ -2229,6 +2532,7 @@ export class Plugin extends CollectionPlugin {
 					// the built-in list view uses. makeWideLayout() drops the cap.
 					viewContext.makeNormalLayout();
 					mount();
+					document.addEventListener('keydown', onShortcutKey, true);
 				},
 
 				onRefresh: ({ records }) => {
@@ -2245,6 +2549,7 @@ export class Plugin extends CollectionPlugin {
 				},
 
 				onDestroy: () => {
+					document.removeEventListener('keydown', onShortcutKey, true);
 					stopHintTimer();
 					if (viewFocused) plugin.showKeyHints(false);
 					detachScroller();
@@ -2341,22 +2646,6 @@ export class Plugin extends CollectionPlugin {
 						return;
 					}
 
-					// Z zooms into the selected row; ⇧Z steps back out one level.
-					if (e.code === 'KeyZ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-						e.preventDefault();
-						if (!e.shiftKey) {
-							zoomTo(current.node.id);
-						} else if (zoomGuid) {
-							const node = hierarchy && hierarchy.nodes.get(zoomGuid);
-							const parent = node ? node.record.linkedRecord(hierarchyFieldId()) : null;
-							const from = zoomGuid;
-							zoomTo(parent ? parent.guid : null);
-							const back = rows.findIndex(r => r.node.id === from);
-							if (back !== -1) setSelection(back);
-						}
-						return;
-					}
-
 					// "/" focuses the collection search box, as it does in the native
 					// views. The app binds this key inside its CARD views
 					// (`onKeyboardNavigation` → `focusCollectionSearch()`), not app-wide,
@@ -2388,31 +2677,23 @@ export class Plugin extends CollectionPlugin {
 						return;
 					}
 
-					// ⌘/ folds or unfolds the WHOLE tree: collapse everything if
-					// anything is open, expand everything otherwise. (Plain "/"
-					// focuses search, above.)
-					if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
-						&& (e.code === 'Slash' || e.key === '/')) {
-						e.preventDefault();
-						toggleAll();
-						return;
-					}
-
-					// Collapse/expand lives on Cmd/Ctrl + ↑/↓, leaving ←/→ free to
-					// walk rows. ↓ opens a node, ↑ closes it or climbs to the parent.
-					// With nothing to open or close they fall back to plain ↑/↓, so
-					// the key never feels dead on a leaf.
+					// ⌘/Ctrl + ↑/↓, kept alongside Thymer's fold keys: ↓ opens a
+					// folded node and moves down (onto its first child), or just moves
+					// down. ↑ closes an open node; with nothing to close it folds the
+					// parent and lands on it. (A fold or zoom action bound to these
+					// keys wins: onShortcutKey takes them first.)
 					if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
 						e.preventDefault();
 						const hasChildren = current.node.children.length > 0;
 						if (e.key === 'ArrowDown') {
 							if (hasChildren && !isExpanded(current.node)) toggle(current.node);
-							else selectNext(1);
+							selectNext(1);
 						} else if (hasChildren && isExpanded(current.node)) {
 							toggle(current.node);
 						} else if (current.parent) {
-							const up = rows.findIndex(r => r.node.id === current.parent.id);
-							if (up !== -1) setSelection(up);
+							// Nothing to close here: close the parent and land on it.
+							setFolded([current.parent], true);
+							refold(current.parent.id);
 						} else if (selectedIndex === 0) {
 							// Same as plain ↑: the top row hands off to the search box.
 							focusAppSearch();

@@ -119,30 +119,217 @@ var plugins = (() => {
     return (fields || []).filter((field) => field.type === "record" && field.active !== false && field.many !== true && (field.id === "parent_page" || field.filter_colguid === collectionGuid));
   }
   __name(hierarchyCandidates, "hierarchyCandidates");
+  var IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+  var KBD_SLOT = (IS_MAC ? "mac" : "win") + (window.thymerDesktopAPI ? "_electron" : "_web");
+  var DEFAULT_KEYS = IS_MAC ? {
+    "nav.togglefold": "Meta+/",
+    "nav.togglefolddescendants": "Meta+Shift+?",
+    "nav.foldchildren": "Meta+,",
+    "nav.unfoldchildren": "Meta+.",
+    "nav.foldcascade": "Meta+Shift+,",
+    "nav.unfoldcascade": "Meta+Shift+.",
+    "panel.zoom_out": "Alt+ArrowUp",
+    "panel.zoom_in": "Alt+ArrowDown"
+  } : {
+    "nav.togglefold": "Ctrl+/",
+    "nav.togglefolddescendants": "Ctrl+Shift+?",
+    "nav.foldchildren": "Ctrl+,",
+    "nav.unfoldchildren": "Ctrl+.",
+    "nav.foldcascade": "Ctrl+Shift+<",
+    "nav.unfoldcascade": "Ctrl+Shift+>",
+    "panel.zoom_out": "Alt+ArrowUp",
+    "panel.zoom_in": "Alt+ArrowDown"
+  };
+  for (const action of [
+    "nav.unfolddescendants",
+    "nav.folddescendants",
+    "nav.togglefoldchildren",
+    "nav.foldcontainer",
+    "nav.unfoldcontainer",
+    "nav.togglefoldcontainer"
+  ]) {
+    DEFAULT_KEYS[action] = "";
+  }
+  var KEY_MODIFIERS = ["Meta", "Ctrl", "Alt", "Shift"];
+  var NAMED_KEYS = [
+    "Escape",
+    "Enter",
+    "Tab",
+    "Space",
+    "Backspace",
+    "Delete",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "F1",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "F10",
+    "F11",
+    "F12",
+    "NumpadEnter",
+    "Insert"
+  ];
+  function normalizeKey(s) {
+    const parts = s.split("+").map((p) => p.trim());
+    if (parts.some((p) => !p)) return null;
+    const mods = /* @__PURE__ */ new Set();
+    for (const p of parts.slice(0, -1)) {
+      const m = KEY_MODIFIERS.find((k) => k.toLowerCase() === p.toLowerCase());
+      if (!m) return null;
+      mods.add(m);
+    }
+    let key = parts[parts.length - 1];
+    if (/\p{So}/u.test(key)) return null;
+    if (key.length === 1) key = key.toUpperCase();
+    else key = { copy: "C", cut: "X", paste: "V" }[key.toLowerCase()] || NAMED_KEYS.find((k) => k.toLowerCase() === key.toLowerCase());
+    return key ? [...KEY_MODIFIERS.filter((m) => mods.has(m)), key].join("+") : null;
+  }
+  __name(normalizeKey, "normalizeKey");
+  var CODE_KEYS = {
+    Minus: "-",
+    Equal: "=",
+    BracketLeft: "[",
+    BracketRight: "]",
+    Semicolon: ";",
+    Quote: "'",
+    Backquote: "`",
+    Backslash: "\\",
+    Comma: ",",
+    Period: ".",
+    Slash: "/"
+  };
+  var SHIFTED_CODE_KEYS = {
+    Minus: "_",
+    Equal: "+",
+    BracketLeft: "{",
+    BracketRight: "}",
+    Semicolon: ":",
+    Quote: '"',
+    Backquote: "~",
+    Backslash: "|",
+    Comma: "<",
+    Period: ">",
+    Slash: "?"
+  };
+  function eventKeyName(e) {
+    if (e.isComposing || e.key === "Dead") return "";
+    const mods = (e.metaKey ? "Meta+" : "") + (e.ctrlKey ? "Ctrl+" : "") + (e.altKey ? "Alt+" : "") + (e.shiftKey ? "Shift+" : "");
+    if (e.code === "BracketLeft") return mods + "[";
+    if (e.code === "BracketRight") return mods + "]";
+    if (e.code === "Space") return mods + "Space";
+    if (!e.key || e.key.length !== 1) return mods + e.key;
+    const c = e.key.charCodeAt(0);
+    if (c >= 32 && c <= 126) return mods + e.key.toUpperCase();
+    let k = /^Key([A-Z])$/.exec(e.code)?.[1];
+    const digit = /^Digit(\d)$/.exec(e.code)?.[1];
+    if (digit) k = e.shiftKey ? ")!@#$%^&*("[Number(digit)] : digit;
+    k ??= (e.shiftKey ? SHIFTED_CODE_KEYS : CODE_KEYS)[e.code];
+    return mods + (k || e.key.toUpperCase());
+  }
+  __name(eventKeyName, "eventKeyName");
+  function parseShortcuts(source) {
+    const entries = [];
+    if (/^\{\s*\}$/.test(source.trim())) return entries;
+    for (const raw of source.split("\n")) {
+      const line = raw.trim();
+      if (!line || line.startsWith("//") || line === "{" || line === "}") continue;
+      const m = line.match(/^(?:"(?<action>[^"]*)"|'(?<action>[^']*)')\s*:\s*(?:"(?<key>[^"]*)"|'(?<key>[^']*)')\s*,?/);
+      const rest = m && line.slice(m[0].length).trim();
+      if (!m || rest && !rest.startsWith("//")) return null;
+      const { action, key } = m.groups;
+      if (!action && !key) return null;
+      if (action && !action.includes(".")) return null;
+      const normalized = key ? normalizeKey(key) : "";
+      if (normalized === null) return null;
+      entries.push({ action: action.toLowerCase(), key: normalized });
+    }
+    return entries;
+  }
+  __name(parseShortcuts, "parseShortcuts");
+  var keymapSource = null;
+  var keymap = null;
+  function foldKeymap() {
+    let root = window.g_focusedComponent;
+    while (root?.parent) root = root.parent;
+    const source = root?.sideBar?.activeUser?.acct_json?.kbd?.[KBD_SLOT] || "";
+    if (keymap && source === keymapSource) return keymap;
+    const keys = { ...DEFAULT_KEYS };
+    for (const { action, key } of parseShortcuts(source) || []) {
+      if (key) {
+        for (const a in keys) if (keys[a] === key && a !== action) keys[a] = "";
+      }
+      if (action in keys) keys[action] = key;
+    }
+    const byKey = /* @__PURE__ */ new Map();
+    for (const a in keys) if (keys[a]) byKey.set(keys[a], a);
+    keymapSource = source;
+    keymap = { keys, byKey };
+    return keymap;
+  }
+  __name(foldKeymap, "foldKeymap");
+  var KEY_GLYPHS = {
+    Space: "Space",
+    ArrowRight: "\u2192",
+    ArrowLeft: "\u2190",
+    Escape: "Esc",
+    Enter: "\u21B5",
+    Tab: "\u21E5",
+    ArrowUp: "\u2191",
+    ArrowDown: "\u2193",
+    PageUp: "PgUp",
+    PageDown: "PgDn",
+    Delete: "Del",
+    Backspace: IS_MAC ? "\u232B" : "Bksp"
+  };
+  function keyLabel(key) {
+    if (!key) return "";
+    const parts = key.split("+");
+    const last = parts.pop();
+    const k = KEY_GLYPHS[last] || last;
+    if (!IS_MAC) return [...parts.map((m) => m === "Meta" ? "Ctrl" : m), k].join("+");
+    const glyph = { Meta: "\u2318", Ctrl: "\u2303", Alt: "\u2325", Shift: "\u21E7" };
+    return parts.map((m) => `<span class="kbdmod kbdmod-mac">${glyph[m]}</span>`).join("") + k;
+  }
+  __name(keyLabel, "keyLabel");
   var KEYS_BODY_CLASS = "plg-outline-keys";
   function keyHintsHtml(peeking, zoomed) {
     const mac = /Mac|iPhone|iPad/.test(navigator.platform);
     const mod = /* @__PURE__ */ __name((sym, word) => mac ? `<span class="kbdmod kbdmod-mac">${sym}</span>` : `${word}+`, "mod");
     const cmd = mod("\u2318", "Ctrl");
     const shift = mod("\u21E7", "Shift");
+    const { keys } = foldKeymap();
+    const cascade = [keys["nav.foldcascade"], keys["nav.unfoldcascade"]].filter(Boolean).map(keyLabel).join(" ");
     const hints = peeking ? [
       ["Esc", "Exit Peek"],
       ["\u21B5", "Open"],
       ["\u2191\u2193", "Browse"]
     ] : [
       ["\u2191\u2193", "Move"],
-      [`${cmd}\u2191\u2193`, "Fold"],
-      [`${cmd}/`, "Fold all"],
+      [keyLabel(keys["nav.togglefold"]), "Fold"],
+      [cascade, "Fold level"],
+      [keyLabel(keys["nav.togglefoldcontainer"]), "Fold all"],
       ["\u21B5", "Open"],
       [`${cmd}\u21B5`, "Open aside"],
       ["Space", "Peek"],
       ["E", "Edit"],
       [`${shift}\u21B5`, "New"],
-      ["Z", "Zoom"],
-      ...zoomed ? [[`${shift}Z`, "Zoom out"]] : [],
+      [keyLabel(keys["panel.zoom_in"]), "Zoom"],
+      ...zoomed ? [[keyLabel(keys["panel.zoom_out"]), "Zoom out"]] : [],
       ["/", "Search"]
     ];
-    return hints.map(([keys, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${keys}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join("");
+    return hints.filter(([k]) => k).map(([k, label]) => `<span class="statusbar-item"><span class="statusbar--kbd">${k}</span> <span class="statusbar--kbd-label">${label}</span></span>`).join("");
   }
   __name(keyHintsHtml, "keyHintsHtml");
   var Plugin = class extends CollectionPlugin {
@@ -165,7 +352,12 @@ var plugins = (() => {
      * own hints there. One item per plugin, shared by every view instance.
      */
     showKeyHints(on, peeking = false, zoomed = false) {
-      const state = `${peeking}|${zoomed}`;
+      const map = foldKeymap();
+      if (map !== this.keysMap) {
+        this.keysMap = map;
+        this.keysEpoch = (this.keysEpoch || 0) + 1;
+      }
+      const state = `${peeking}|${zoomed}|${this.keysEpoch}`;
       if (on && !this.keysItem) {
         this.keysState = state;
         this.keysItem = this.ui.addStatusBarItem({ htmlLabel: keyHintsHtml(peeking, zoomed) });
@@ -318,7 +510,7 @@ var plugins = (() => {
           const nav = panel.getNavigation();
           return nav && nav.type === "overview" && nav.rootId === collectionGuid();
         }) || null, "ownPanel");
-        const isExpanded = /* @__PURE__ */ __name((node) => searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id), "isExpanded");
+        const isExpanded = /* @__PURE__ */ __name((node) => node.id === zoomGuid || (searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id)), "isExpanded");
         const visibleFields = /* @__PURE__ */ __name(() => {
           const byId = fieldsById();
           return viewContext.getVisiblePropertyIds().map((id) => byId[id]).filter((field) => field && field.id !== "title" && field.type !== "datetime" && field.type !== "banner");
@@ -387,6 +579,7 @@ var plugins = (() => {
           }
         }, "setSelection");
         const toggle = /* @__PURE__ */ __name((node) => {
+          if (node.id === zoomGuid) return;
           if (searchOpen) {
             if (searchOpen.has(node.id)) searchOpen.delete(node.id);
             else searchOpen.add(node.id);
@@ -400,26 +593,127 @@ var plugins = (() => {
           const restored = rows.findIndex((r) => r.node.id === keepGuid);
           setSelection(restored === -1 ? 0 : restored);
         }, "toggle");
-        const toggleAll = /* @__PURE__ */ __name(() => {
-          const expandable = [];
-          const visit = /* @__PURE__ */ __name((node) => {
-            if (node.children.length) expandable.push(node);
-            node.children.forEach(visit);
-          }, "visit");
-          hierarchy.rootNodes.forEach(visit);
-          if (!expandable.length) return;
-          const close = expandable.some(isExpanded);
-          if (searchOpen) {
-            expandable.forEach((node) => close ? searchOpen.delete(node.id) : searchOpen.add(node.id));
-          } else {
-            expandable.forEach((node) => close ? collapsed.add(node.id) : collapsed.delete(node.id));
-            localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+        const canFold = /* @__PURE__ */ __name((node) => node.children.length > 0, "canFold");
+        const setFolded = /* @__PURE__ */ __name((nodes, fold) => {
+          for (const node of nodes) {
+            if (!canFold(node) || node.id === zoomGuid) continue;
+            if (searchOpen) {
+              if (fold) searchOpen.delete(node.id);
+              else searchOpen.add(node.id);
+            } else if (fold) collapsed.add(node.id);
+            else collapsed.delete(node.id);
           }
-          const keepGuid = rows[selectedIndex] ? rows[selectedIndex].node.id : null;
+          if (!searchOpen) localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+        }, "setFolded");
+        const nodesUnder = /* @__PURE__ */ __name((node) => {
+          const out = [];
+          const visit = /* @__PURE__ */ __name((n) => n.children.forEach((child) => {
+            out.push(child);
+            visit(child);
+          }), "visit");
+          visit(node);
+          return out;
+        }, "nodesUnder");
+        const foldSet = /* @__PURE__ */ __name((nodes, op) => {
+          const foldable = nodes.filter(canFold);
+          if (!foldable.length) return;
+          setFolded(foldable, op === "toggle" ? foldable.some(isExpanded) : op === "fold");
+        }, "foldSet");
+        const cascade = /* @__PURE__ */ __name((node, op) => {
+          const levels = [[node]];
+          const walk = /* @__PURE__ */ __name((n, depth) => {
+            if (!isExpanded(n)) return;
+            n.children.forEach((child) => {
+              (levels[depth + 1] ??= []).push(child);
+              walk(child, depth + 1);
+            });
+          }, "walk");
+          walk(node, 0);
+          if (op === "fold") {
+            for (let d = levels.length - 2; d >= 0; d--) {
+              const open = levels[d].filter((n) => canFold(n) && isExpanded(n));
+              if (open.length) return setFolded(open, true);
+            }
+          } else {
+            for (let d = levels.length - 1; d >= 0; d--) {
+              const shut = levels[d].filter((n) => canFold(n) && !isExpanded(n));
+              if (shut.length) return setFolded(shut, false);
+            }
+          }
+        }, "cascade");
+        const refold = /* @__PURE__ */ __name((guid) => {
+          const keep = guid || (rows[selectedIndex] ? rows[selectedIndex].node.id : null);
           renderRows();
-          const restored = rows.findIndex((r) => r.node.id === keepGuid);
+          const restored = rows.findIndex((r) => r.node.id === keep);
           setSelection(restored === -1 ? 0 : restored);
-        }, "toggleAll");
+        }, "refold");
+        const runAction = /* @__PURE__ */ __name((action) => {
+          const current = rows[selectedIndex];
+          if (!current) return;
+          const node = current.node;
+          const all = /* @__PURE__ */ __name(() => zoomGuid ? hierarchy.rootNodes.flatMap(nodesUnder) : hierarchy.rootNodes.flatMap((root) => [root, ...nodesUnder(root)]), "all");
+          const [scope, op] = {
+            "nav.togglefold": ["item", "toggle"],
+            "nav.foldchildren": ["children", "fold"],
+            "nav.unfoldchildren": ["children", "unfold"],
+            "nav.togglefoldchildren": ["children", "toggle"],
+            "nav.folddescendants": ["descendants", "fold"],
+            "nav.unfolddescendants": ["descendants", "unfold"],
+            "nav.togglefolddescendants": ["descendants", "toggle"],
+            "nav.foldcontainer": ["all", "fold"],
+            "nav.unfoldcontainer": ["all", "unfold"],
+            "nav.togglefoldcontainer": ["all", "toggle"]
+          }[action] || [];
+          if (scope) {
+            foldSet({
+              item: /* @__PURE__ */ __name(() => [node], "item"),
+              children: /* @__PURE__ */ __name(() => node.children, "children"),
+              descendants: /* @__PURE__ */ __name(() => nodesUnder(node), "descendants"),
+              all
+            }[scope](), op);
+            refold();
+            return;
+          }
+          if (action === "nav.foldcascade") {
+            if (canFold(node) && isExpanded(node)) {
+              cascade(node, "fold");
+              refold();
+            } else if (current.parent) {
+              cascade(current.parent, "fold");
+              refold(current.parent.id);
+            } else {
+              setFolded(hierarchy.rootNodes.filter(isExpanded), true);
+              refold();
+            }
+            return;
+          }
+          if (action === "nav.unfoldcascade") {
+            cascade(node, "unfold");
+            refold();
+            return;
+          }
+          if (action === "panel.zoom_in") {
+            zoomTo(node.id);
+          } else if (action === "panel.zoom_out" && zoomGuid) {
+            const zoomed = hierarchy && hierarchy.nodes.get(zoomGuid);
+            const parent = zoomed ? zoomed.record.linkedRecord(hierarchyFieldId()) : null;
+            const from = zoomGuid;
+            zoomTo(parent ? parent.guid : null);
+            const back = rows.findIndex((r) => r.node.id === from);
+            if (back !== -1) setSelection(back);
+          }
+        }, "runAction");
+        const onShortcutKey = /* @__PURE__ */ __name((e) => {
+          if (!viewFocused || !$root || $menu || propMode || !rows.length) return;
+          const $focused = document.activeElement;
+          if ($focused && $focused !== document.body && !$root.contains($focused)) return;
+          if ($focused && $focused.classList && $focused.classList.contains("outline-inline-input")) return;
+          const action = foldKeymap().byKey.get(eventKeyName(e));
+          if (!action) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          runAction(action);
+        }, "onShortcutKey");
         const restack = /* @__PURE__ */ __name(() => {
           if (!$list) return;
           const $rows = Array.from($list.querySelectorAll(".outline-row"));
@@ -742,7 +1036,6 @@ var plugins = (() => {
           if (Date.now() - (req.at || 0) > 1e4) return;
           zoomGuid = req.guid || null;
           selectedIndex = 0;
-          if (req.search) setTimeout(focusAppSearch, 50);
         }, "takeZoomHandoff");
         const renderZoomBar = /* @__PURE__ */ __name(() => {
           if (!$zoom) return;
@@ -759,7 +1052,7 @@ var plugins = (() => {
           $all.type = "button";
           $all.className = "button-minimal button-small outline-zoom-step";
           $all.textContent = "All";
-          $all.title = "Show the whole collection (\u21E7Z steps out)";
+          $all.title = "Show the whole collection";
           $all.addEventListener("click", () => zoomTo(null));
           $zoom.appendChild($all);
           chain.forEach((record, i) => {
@@ -1713,6 +2006,7 @@ var plugins = (() => {
             );
             viewContext.makeNormalLayout();
             mount();
+            document.addEventListener("keydown", onShortcutKey, true);
           }, "onLoad"),
           onRefresh: /* @__PURE__ */ __name(({ records }) => {
             lastRecords = records;
@@ -1726,6 +2020,7 @@ var plugins = (() => {
             renderWindow(true);
           }, "onPanelResize"),
           onDestroy: /* @__PURE__ */ __name(() => {
+            document.removeEventListener("keydown", onShortcutKey, true);
             stopHintTimer();
             if (viewFocused) plugin.showKeyHints(false);
             detachScroller();
@@ -1797,20 +2092,6 @@ var plugins = (() => {
               createRecord();
               return;
             }
-            if (e.code === "KeyZ" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-              e.preventDefault();
-              if (!e.shiftKey) {
-                zoomTo(current.node.id);
-              } else if (zoomGuid) {
-                const node = hierarchy && hierarchy.nodes.get(zoomGuid);
-                const parent = node ? node.record.linkedRecord(hierarchyFieldId()) : null;
-                const from = zoomGuid;
-                zoomTo(parent ? parent.guid : null);
-                const back = rows.findIndex((r) => r.node.id === from);
-                if (back !== -1) setSelection(back);
-              }
-              return;
-            }
             if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
               if (focusAppSearch()) e.preventDefault();
               return;
@@ -1831,22 +2112,17 @@ var plugins = (() => {
               peekSelected();
               return;
             }
-            if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === "Slash" || e.key === "/")) {
-              e.preventDefault();
-              toggleAll();
-              return;
-            }
             if ((e.metaKey || e.ctrlKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault();
               const hasChildren = current.node.children.length > 0;
               if (e.key === "ArrowDown") {
                 if (hasChildren && !isExpanded(current.node)) toggle(current.node);
-                else selectNext(1);
+                selectNext(1);
               } else if (hasChildren && isExpanded(current.node)) {
                 toggle(current.node);
               } else if (current.parent) {
-                const up = rows.findIndex((r) => r.node.id === current.parent.id);
-                if (up !== -1) setSelection(up);
+                setFolded([current.parent], true);
+                refold(current.parent.id);
               } else if (selectedIndex === 0) {
                 focusAppSearch();
               } else {
