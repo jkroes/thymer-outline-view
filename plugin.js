@@ -320,7 +320,7 @@ const KEYS_BODY_CLASS = 'plg-outline-keys';
  * markup (.statusbar-item > .statusbar--kbd + .statusbar--kbd-label, read off
  * the live status bar 2026-11-15) so they pick up its styling.
  */
-function keyHints(peeking, zoomed, itemName) {
+function keyHints(mode, zoomed, itemName) {
 	const cmd = IS_MAC ? '⌘' : 'Ctrl+';
 	const shift = IS_MAC ? '⇧' : 'Shift+';
 	const { keys } = foldKeymap();
@@ -336,11 +336,20 @@ function keyHints(peeking, zoomed, itemName) {
 	// fold and zoom hints go without it here.
 	const mono = 'statusbar--kbd-modifier';
 	// While peeking, the set the app's own views show then (getPeekStatusBarContext).
+	// In property mode and while a field is being edited, native List's sets for
+	// the same states (its inPropertyMode / editingCardFieldId branches).
 	// Otherwise native List's set first, in its order and wording, then ours.
-	const hints = peeking ? [
+	const hints = mode === 'peek' ? [
 		['Esc', 'Exit Peek', mono],
 		['↵', 'Open', mono],
 		['↕ ↔', 'Browse', mono],
+	] : mode === 'props' ? [
+		['↕', 'Previous / next property', mono],
+		['↵', 'Edit / save', mono],
+		['Esc', 'Exit', mono],
+	] : mode === 'field' ? [
+		['↵', 'Save', mono],
+		['Esc', 'Exit', mono],
 	] : [
 		['/', 'Search', mono],
 		['Space', 'Peek', mono],
@@ -389,7 +398,7 @@ export class Plugin extends CollectionPlugin {
 	 * pinned over the left edge by CSS while the body class hides the app's
 	 * own hints there. One item per plugin, shared by every view instance.
 	 */
-	showKeyHints(on, peeking = false, zoomed = false, itemName = 'Page') {
+	showKeyHints(on, mode = null, zoomed = false, itemName = 'Page') {
 		// The keymap object is replaced whenever the user's shortcuts change.
 		const map = foldKeymap();
 		if (map !== this.keysMap) {
@@ -401,7 +410,7 @@ export class Plugin extends CollectionPlugin {
 			this.keysStart = 0;
 			return;
 		}
-		const state = `${peeking}|${zoomed}|${itemName}|${this.keysEpoch}`;
+		const state = `${mode}|${zoomed}|${itemName}|${this.keysEpoch}`;
 		if (!this.keysItem) {
 			this.keysItem = this.ui.addStatusBarItem({ htmlLabel: '' });
 			const $el = this.keysItem.getElement();
@@ -426,7 +435,7 @@ export class Plugin extends CollectionPlugin {
 		}
 		if (this.keysState !== state) {
 			this.keysState = state;
-			this.keysHints = keyHints(peeking, zoomed, itemName);
+			this.keysHints = keyHints(mode, zoomed, itemName);
 			this.keysStart = 0;
 			this.renderKeyHints();
 		}
@@ -1121,8 +1130,16 @@ export class Plugin extends CollectionPlugin {
 			 * view hears, so poll while focused — it's one cheap call.
 			 */
 			let hintTimer = null;
+			/** Which hint set applies: peek, property mode, a field being edited, or the default. */
+			const hintMode = () => {
+				if (isPeeking()) return 'peek';
+				const $focused = document.activeElement;
+				if ($root && $root.contains($focused) && $focused.classList.contains('outline-inline-input')) return 'field';
+				if (propMode) return $menu ? 'field' : 'props';
+				return null;
+			};
 			const syncKeyHints = () => {
-				if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid, viewContext.getRecordTypeName());
+				if (viewFocused) plugin.showKeyHints(true, hintMode(), !!zoomGuid, viewContext.getRecordTypeName());
 			};
 			const stopHintTimer = () => {
 				if (hintTimer) clearInterval(hintTimer);
@@ -1314,6 +1331,7 @@ export class Plugin extends CollectionPlugin {
 					$menu.remove();
 					$menu = null;
 					document.removeEventListener('click', onDocumentClick, true);
+					syncKeyHints();
 				}
 			};
 
@@ -1421,6 +1439,7 @@ export class Plugin extends CollectionPlugin {
 					$menu.tabIndex = -1;
 					$menu.focus();
 				}
+				syncKeyHints();
 			};
 
 			/** Whether `record` is the zoom root or sits anywhere under it. */
@@ -1586,7 +1605,7 @@ export class Plugin extends CollectionPlugin {
 			// Tab / Shift+Tab / ⌘⇧↑ / ⌘⇧↓ indent, outdent and move the selected row
 			// the way the editor does with lines. A row's place is two properties:
 			// its parent (the view's hierarchy field) and its position among its
-			// siblings (the number property the view is sorted by). Each key writes
+			// siblings (the view's Order property, opts.order_field_id). Each key writes
 			// the parent, the position, or both.
 
 			/**
@@ -1630,12 +1649,17 @@ export class Plugin extends CollectionPlugin {
 
 			const toast = (title, message) => ui.addToaster({ title, message, dismissible: true, autoDestroyTime: 4000 });
 
-			/** The view's sort when it is a writable number property: where sibling order lives. */
+			/**
+			 * The canonical position field: the number property the installer
+			 * bound to this view (opts.order_field_id). Positions are 1, 2, 3…
+			 * ascending; a view sorted by it descending flips the direction.
+			 */
 			const orderField = () => {
 				const view = (plugin.getConfiguration().views || []).find(v => v.id === viewId);
-				const field = view ? fieldsById()[view.sort_field_id] : null;
+				const field = view && view.opts ? fieldsById()[view.opts.order_field_id] : null;
 				if (!field || field.type !== 'number' || field.read_only || field.active === false) return null;
-				return { id: field.id, label: field.label, dir: view.sort_dir === 'desc' ? -1 : 1 };
+				const desc = view.sort_field_id === field.id && view.sort_dir === 'desc';
+				return { id: field.id, label: field.label, dir: desc ? -1 : 1 };
 			};
 
 			const orderOf = (node, ord) => {
@@ -1719,7 +1743,7 @@ export class Plugin extends CollectionPlugin {
 
 				const ord = orderField();
 				if (!ord && (op === 'up' || op === 'down')) {
-					toast('Sort by a number property to reorder', 'Sibling order is stored in the number property the view is sorted by.');
+					toast('No Order property', 'Run "Outline: install into a collection…" to add one; sibling order is stored there.');
 					return;
 				}
 				const kids = childList(target).filter(n => n !== node);
@@ -1773,6 +1797,7 @@ export class Plugin extends CollectionPlugin {
 					done = true;
 					if (commit) onCommit($input.value.trim());
 					else if (onCancel) onCancel();
+					syncKeyHints();
 				};
 				$input.addEventListener('keydown', (e) => {
 					e.stopPropagation();
@@ -1784,6 +1809,7 @@ export class Plugin extends CollectionPlugin {
 				$cell.replaceWith($input);
 				$input.focus();
 				$input.select();
+				syncKeyHints();
 			};
 
 			/**
@@ -1940,6 +1966,7 @@ export class Plugin extends CollectionPlugin {
 				propMode = null;
 				renderRows();
 				focusView();
+				syncKeyHints();
 			};
 
 			/**
@@ -2901,6 +2928,7 @@ export class Plugin extends CollectionPlugin {
 						if (editableFields().length) {
 							propMode = { guid: current.node.id, index: 0 };
 							renderRows();
+							syncKeyHints();
 						}
 						return;
 					}

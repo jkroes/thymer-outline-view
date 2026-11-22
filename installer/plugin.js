@@ -46,6 +46,23 @@ const subPageField = (collectionGuid) => ({
 });
 
 const SUBPAGE = 'parent_page';
+
+/**
+ * The canonical position field: siblings are ordered by it, and the view's
+ * rearranging keys write it. The view finds it by id through the Outline view's
+ * opts.order_field_id, so a rename doesn't unbind it. Field ids look like the
+ * app's own: "f" + 14 characters of Crockford base32.
+ */
+const ORDER_LABEL = 'Order';
+const newFieldId = () => {
+	const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+	const bytes = crypto.getRandomValues(new Uint8Array(14));
+	return 'f' + Array.from(bytes, b => alphabet[b % 32]).join('');
+};
+const orderFieldEntry = (id) => ({
+	id, label: ORDER_LABEL, icon: 'ti-list-tree',
+	many: false, read_only: false, active: true, type: 'number',
+});
 // Cycle guard. Only setSubPageOf() refuses cycles; an MCP or Markdown Mirror
 // edit to "Sub-page of" goes through the app's raw property write, which doesn't.
 const MAX_DEPTH = 100;
@@ -162,6 +179,14 @@ class Plugin extends AppPlugin {
 			.some(f => f.id === 'parent_page' && f.active !== false);
 	}
 
+	/** Whether every Outline view is bound to an active number field (opts.order_field_id). */
+	hasOrder(api) {
+		const fields = api.getConfiguration().fields || [];
+		const views = this.ourViews(api);
+		return views.length > 0 && views.every(v => fields.some(f => f.id === (v.opts && v.opts.order_field_id)
+			&& f.type === 'number' && f.active !== false));
+	}
+
 	customViews(api) {
 		return (api.getConfiguration().views || []).filter(v => v.type === 'custom');
 	}
@@ -190,6 +215,7 @@ class Plugin extends AppPlugin {
 			name: api.getName(),
 			subPages: this.hasSubPages(api),
 			ours: this.ourViews(api).length,
+			ordered: this.hasOrder(api),
 			code: this.codeState(api),
 		};
 	}
@@ -197,7 +223,8 @@ class Plugin extends AppPlugin {
 	// --- actions ------------------------------------------------------------
 
 	/**
-	 * Brings a collection to: sub-pages on, one Outline view, the current code.
+	 * Brings a collection to: sub-pages on, an Order property, one Outline view
+	 * sorted by it and bound to it (opts.order_field_id), the current code.
 	 * Running it twice changes nothing the second time.
 	 */
 	async install(guid, log) {
@@ -227,13 +254,45 @@ class Plugin extends AppPlugin {
 			else conf.fields = (conf.fields || []).concat([subPageField(guid)]);
 			changed = true;
 		}
+		// The Order field: the one an Outline view is bound to, else an existing
+		// number field named Order (reactivated if archived, so its values come
+		// back), else a new one.
+		const fields = conf.fields || [];
+		const bound = this.ourViews(api).map(v => v.opts && v.opts.order_field_id).find(Boolean);
+		let order = fields.find(f => f.id === bound && f.type === 'number')
+			|| fields.find(f => f.type === 'number' && (f.label || '').trim().toLowerCase() === ORDER_LABEL.toLowerCase());
+		if (!order) {
+			log(`Adding the ${ORDER_LABEL} property...`);
+			const taken = new Set(fields.map(f => f.id));
+			let id;
+			do id = newFieldId(); while (taken.has(id));
+			order = orderFieldEntry(id);
+			conf.fields = fields.concat([order]);
+			changed = true;
+		} else if (order.active === false) {
+			log(`Restoring the ${order.label} property...`);
+			order.active = true;
+			changed = true;
+		}
+
 		if (!this.ourViews(api).length) {
-			log('Adding the Outline view...');
+			log(`Adding the Outline view, sorted by ${order.label}...`);
 			const taken = new Set((conf.views || []).map(v => v.id));
 			let id = VIEW_ENTRY.id;
 			for (let n = 2; taken.has(id); n++) id = `${VIEW_ENTRY.id}${n}`;
-			conf.views = (conf.views || []).concat([Object.assign({}, VIEW_ENTRY, { id })]);
+			conf.views = (conf.views || []).concat([Object.assign({}, VIEW_ENTRY, {
+				id, sort_field_id: order.id, sort_dir: 'asc', opts: { order_field_id: order.id },
+			})]);
 			changed = true;
+		} else {
+			// An Outline view from before the Order binding: bind it, leaving its
+			// sort alone (the user may have chosen one).
+			for (const v of conf.views.filter(isOurView)) {
+				if (v.opts && v.opts.order_field_id === order.id) continue;
+				log(`Binding the Outline view to ${order.label}...`);
+				v.opts = Object.assign({}, v.opts, { order_field_id: order.id });
+				changed = true;
+			}
 		}
 
 		// Every config change goes in ONE save. Writes are not readable in the same
@@ -269,7 +328,7 @@ class Plugin extends AppPlugin {
 
 	/**
 	 * Removes the view. Leaves the code alone unless it is exactly ours, and
-	 * never touches the nesting property — that holds the nesting itself.
+	 * never touches the nesting or Order properties — they hold the data.
 	 */
 	async uninstall(guid, log) {
 		let api = this.resolve(guid);
@@ -303,7 +362,7 @@ class Plugin extends AppPlugin {
 		} else {
 			log('Leaving the plugin code alone — it is not the Outline source.');
 		}
-		log('Sub-pages are untouched.');
+		log('Sub-pages and the Order property are untouched.');
 		this.buildIndex();
 	}
 
@@ -720,7 +779,7 @@ class Plugin extends AppPlugin {
 
 		const h = el('h2', wrap, 'Install the Outline view');
 		h.style.cssText = 'margin:0 0 4px;';
-		const sub = el('p', wrap, 'Pick a collection. Installing turns on sub-pages, adds an Outline view, and writes the view code.');
+		const sub = el('p', wrap, 'Pick a collection. Installing turns on sub-pages, adds an Order property and an Outline view sorted by it, and writes the view code.');
 		sub.style.cssText = 'margin:0 0 20px;opacity:.7;';
 
 		let collections = [];
@@ -766,6 +825,7 @@ class Plugin extends AppPlugin {
 		const bits = [];
 		bits.push(s.subPages ? 'sub-pages on' : 'sub-pages off');
 		bits.push(s.ours ? 'Outline view' : 'no Outline view');
+		if (s.ours && !s.ordered) bits.push('no Order property');
 		bits.push(s.code === 'current' ? 'view installed'
 			: s.code === 'outdated' ? 'older version installed'
 			: s.code === 'free' ? 'plugin slot empty'
@@ -812,7 +872,7 @@ class Plugin extends AppPlugin {
 		// to date" is worse than no button.
 		const ours = s.code === 'current' || s.code === 'outdated';
 		const present = s.ours > 0 && ours;
-		const complete = present && s.subPages && s.code === 'current';
+		const complete = present && s.subPages && s.ordered && s.code === 'current';
 
 		if (!complete) {
 			run(s.code === 'outdated' ? 'Update' : present ? 'Repair' : 'Install',

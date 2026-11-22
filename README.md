@@ -26,17 +26,17 @@ provides the page features.
 
 | Button | What it does |
 |---|---|
-| Install | Turns on **sub-pages**, adds an Outline view, and writes the view's code. |
-| Repair | Puts back whichever of those is missing: sub-pages, the Outline view, or the code. |
+| Install | Turns on **sub-pages**, adds an **Order** property and an Outline view sorted by it, and writes the view's code. An existing number property named Order is reused. |
+| Repair | Puts back whichever of those is missing: sub-pages, the Order property, the Outline view, or the code. |
 | Update | Replaces an older version of the view's code. |
-| Remove | Takes the Outline view and its code out again. |
+| Remove | Takes the Outline view and its code out again. Sub-pages and Order keep their values. |
 
 The installer never overwrites code it didn't write. Thymer gives each collection one
 plugin, so a collection that already has code of its own (formulas, a custom record
 title) is flagged, and Install opens the code editor with the view loaded so you can
 merge the two yourself. Nothing is saved until you save.
 
-**By hand** instead: turn on sub-pages, add a view of type **Custom** (any name), then paste [`dist/plugin.js`](dist/plugin.js) into the
+**By hand** instead: turn on sub-pages, add a number property for the order, add a view of type **Custom** sorted by it, set the view's `opts.order_field_id` to that property's id in the collection's config JSON, then paste [`dist/plugin.js`](dist/plugin.js) into the
 collection's plugin code and save.
 
 Other devices pick the view up after a reload (⌘R).
@@ -151,7 +151,7 @@ Most keys are the List view's own. The differences:
 | `Tab` `⇧Tab` | Indent the selected row under the row above it, or outdent it to follow its parent. Changes the page's Sub-page of. |
 | `R` `F2` | Rename the selected row in place, as in List. |
 | Trash (`⌘⌫`) | Trash the selected page **and every page under it**, then select the next row. Your own key if you rebound Thymer's trash shortcut. Each page goes to the trash separately. |
-| `⌘⇧↑` `⌘⇧↓` | Move the selected row up or down among its siblings. Needs the view sorted by a number property (an *Order* field, say): that is where the position is stored, numbered 1, 2, 3… under each parent. Indent and outdent write it too when there is one. None of these work during a search. |
+| `⌘⇧↑` `⌘⇧↓` | Move the selected row up or down among its siblings. The position is stored in the collection's **Order** property, numbered 1, 2, 3… under each parent, so the view has to be sorted by Order (the installer sets that up). Indent and outdent write it too. None of these work during a search. |
 | `Space` | Peek (above). |
 
 The rest work as in List: `Enter` opens, `⌘Enter` opens in the side panel, `Home` /
@@ -164,7 +164,9 @@ trash), then the outline's own: edit, indent, outdent, reorder, zoom (and zoom o
 while zoomed), and last the folds: fold, fold children, fold descendants, fold level,
 fold all. Fold, zoom and trash hints show your own
 bindings, and an action with no key has no hint. During a peek it switches to the peek
-keys, **Esc** Exit Peek, **↵** Open, **↕ ↔** Browse, as Thymer's own views do.
+keys, **Esc** Exit Peek, **↵** Open, **↕ ↔** Browse, as Thymer's own views do. In property
+mode (`E`) it shows **↕** Previous / next property, **↵** Edit / save, **Esc** Exit, and
+while a field or a name is being edited **↵** Save, **Esc** Exit, matching List.
 
 When the hints don't all fit the window's width, a **? More** hint leads the strip:
 press `?` to page to the hints that were cut off, and again to come back round to the

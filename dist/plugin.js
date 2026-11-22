@@ -313,7 +313,7 @@ var plugins = (() => {
   }
   __name(kbdHtml, "kbdHtml");
   var KEYS_BODY_CLASS = "plg-outline-keys";
-  function keyHints(peeking, zoomed, itemName) {
+  function keyHints(mode, zoomed, itemName) {
     const cmd = IS_MAC ? "\u2318" : "Ctrl+";
     const shift = IS_MAC ? "\u21E7" : "Shift+";
     const { keys } = foldKeymap();
@@ -321,10 +321,17 @@ var plugins = (() => {
     const modsOf = /* @__PURE__ */ __name((k) => k.split("+").slice(0, -1).join("+"), "modsOf");
     const cascade = up && down && modsOf(up) === modsOf(down) ? keyLabel(up) + keyLabel(down.split("+").pop()) : [up, down].filter(Boolean).map(keyLabel).join(" ");
     const mono = "statusbar--kbd-modifier";
-    const hints = peeking ? [
+    const hints = mode === "peek" ? [
       ["Esc", "Exit Peek", mono],
       ["\u21B5", "Open", mono],
       ["\u2195 \u2194", "Browse", mono]
+    ] : mode === "props" ? [
+      ["\u2195", "Previous / next property", mono],
+      ["\u21B5", "Edit / save", mono],
+      ["Esc", "Exit", mono]
+    ] : mode === "field" ? [
+      ["\u21B5", "Save", mono],
+      ["Esc", "Exit", mono]
     ] : [
       ["/", "Search", mono],
       ["Space", "Peek", mono],
@@ -371,7 +378,7 @@ var plugins = (() => {
      * pinned over the left edge by CSS while the body class hides the app's
      * own hints there. One item per plugin, shared by every view instance.
      */
-    showKeyHints(on, peeking = false, zoomed = false, itemName = "Page") {
+    showKeyHints(on, mode = null, zoomed = false, itemName = "Page") {
       const map = foldKeymap();
       if (map !== this.keysMap) {
         this.keysMap = map;
@@ -382,7 +389,7 @@ var plugins = (() => {
         this.keysStart = 0;
         return;
       }
-      const state = `${peeking}|${zoomed}|${itemName}|${this.keysEpoch}`;
+      const state = `${mode}|${zoomed}|${itemName}|${this.keysEpoch}`;
       if (!this.keysItem) {
         this.keysItem = this.ui.addStatusBarItem({ htmlLabel: "" });
         const $el = this.keysItem.getElement();
@@ -403,7 +410,7 @@ var plugins = (() => {
       }
       if (this.keysState !== state) {
         this.keysState = state;
-        this.keysHints = keyHints(peeking, zoomed, itemName);
+        this.keysHints = keyHints(mode, zoomed, itemName);
         this.keysStart = 0;
         this.renderKeyHints();
       }
@@ -864,8 +871,15 @@ var plugins = (() => {
           return !!peekPanelId;
         }, "isPeeking");
         let hintTimer = null;
+        const hintMode = /* @__PURE__ */ __name(() => {
+          if (isPeeking()) return "peek";
+          const $focused = document.activeElement;
+          if ($root && $root.contains($focused) && $focused.classList.contains("outline-inline-input")) return "field";
+          if (propMode) return $menu ? "field" : "props";
+          return null;
+        }, "hintMode");
         const syncKeyHints = /* @__PURE__ */ __name(() => {
-          if (viewFocused) plugin.showKeyHints(true, isPeeking(), !!zoomGuid, viewContext.getRecordTypeName());
+          if (viewFocused) plugin.showKeyHints(true, hintMode(), !!zoomGuid, viewContext.getRecordTypeName());
         }, "syncKeyHints");
         const stopHintTimer = /* @__PURE__ */ __name(() => {
           if (hintTimer) clearInterval(hintTimer);
@@ -969,6 +983,7 @@ var plugins = (() => {
             $menu.remove();
             $menu = null;
             document.removeEventListener("click", onDocumentClick, true);
+            syncKeyHints();
           }
         }, "closeMenu");
         const showMenu = /* @__PURE__ */ __name((items, x, y, filterPlaceholder) => {
@@ -1068,6 +1083,7 @@ var plugins = (() => {
             $menu.tabIndex = -1;
             $menu.focus();
           }
+          syncKeyHints();
         }, "showMenu");
         const inZoom = /* @__PURE__ */ __name((record, parentFieldId) => {
           for (let r = record, d = 0; r && d < 100; r = r.linkedRecord(parentFieldId), d++) {
@@ -1209,9 +1225,10 @@ var plugins = (() => {
         const toast = /* @__PURE__ */ __name((title, message) => ui.addToaster({ title, message, dismissible: true, autoDestroyTime: 4e3 }), "toast");
         const orderField = /* @__PURE__ */ __name(() => {
           const view = (plugin.getConfiguration().views || []).find((v) => v.id === viewId);
-          const field = view ? fieldsById()[view.sort_field_id] : null;
+          const field = view && view.opts ? fieldsById()[view.opts.order_field_id] : null;
           if (!field || field.type !== "number" || field.read_only || field.active === false) return null;
-          return { id: field.id, label: field.label, dir: view.sort_dir === "desc" ? -1 : 1 };
+          const desc = view.sort_field_id === field.id && view.sort_dir === "desc";
+          return { id: field.id, label: field.label, dir: desc ? -1 : 1 };
         }, "orderField");
         const orderOf = /* @__PURE__ */ __name((node, ord) => {
           const p = pending.get(node.id);
@@ -1268,7 +1285,7 @@ var plugins = (() => {
           }
           const ord = orderField();
           if (!ord && (op === "up" || op === "down")) {
-            toast("Sort by a number property to reorder", "Sibling order is stored in the number property the view is sorted by.");
+            toast("No Order property", 'Run "Outline: install into a collection\u2026" to add one; sibling order is stored there.');
             return;
           }
           const kids = childList(target).filter((n) => n !== node);
@@ -1314,6 +1331,7 @@ var plugins = (() => {
             done = true;
             if (commit) onCommit($input.value.trim());
             else if (onCancel) onCancel();
+            syncKeyHints();
           }, "finish");
           $input.addEventListener("keydown", (e) => {
             e.stopPropagation();
@@ -1330,6 +1348,7 @@ var plugins = (() => {
           $cell.replaceWith($input);
           $input.focus();
           $input.select();
+          syncKeyHints();
         }, "editText");
         const startNameEdit = /* @__PURE__ */ __name((node, isNew) => {
           if (!$list) return;
@@ -1474,6 +1493,7 @@ var plugins = (() => {
           propMode = null;
           renderRows();
           focusView();
+          syncKeyHints();
         }, "exitPropMode");
         const buildPropEditor = /* @__PURE__ */ __name((node, indent) => {
           const $panel = document.createElement("div");
@@ -2303,6 +2323,7 @@ var plugins = (() => {
               if (editableFields().length) {
                 propMode = { guid: current.node.id, index: 0 };
                 renderRows();
+                syncKeyHints();
               }
               return;
             }
