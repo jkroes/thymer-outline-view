@@ -1,12 +1,10 @@
 /**
- * Outline — the global half of the Outline plugin.
+ * Outline — the global half of the Outline plugin: page features for every
+ * collection that has an Outline view.
  *
- * The view itself is a CollectionPlugin, so it has to live in each collection's
- * own plugin slot (global plugins can't register views). This plugin installs it
- * — walks your collections, shows what state each one is in, and does the three
- * steps for you: turn on sub-pages, add a Custom view, write the view's code —
- * and, on every page of a collection with an Outline view, adds the hierarchy
- * features that work outside the view:
+ * The view itself is collection code (../collection/plugin.js), pasted or
+ * deployed into each collection's own plugin slot. This plugin adds what works
+ * outside the view, on every page of such a collection:
  *
  *   - Breadcrumb: Root › … › Parent, after the collection pill above the title.
  *   - Show this page: open the Outline view zoomed into the page, its row selected.
@@ -16,56 +14,12 @@
  * nothing to configure. Nothing derived is stored: ancestors are walked live
  * through linkedRecord().
  *
- * The view source is embedded at build time by build.mjs — this file is a
- * template and will not run until built. Nothing is fetched at runtime.
+ * Module-style source: `./build.sh global` bundles it with what it shares with
+ * the view (../view.js), so it will not run until built.
  */
 
-const VIEW_SOURCE = __VIEW_SOURCE__;
+import { SUBPAGE, OUTLINE_SIGNATURE, ancestorsOf, isOutlineView, subPagesOn, subtreeRecords } from '../view.js';
 
-const PANEL_ID = 'outline-installer';
-
-/** What a collection's plugin slot looks like when nobody has touched it. */
-const STUB = 'class Plugin extends CollectionPlugin {\n  onLoad() {\n    // Put your custom code here...\n  }\n}\n';
-
-/**
- * A distinctive name from the view's source. Used to recognise OUR code in a
- * collection even when it is an older build — exact equality only ever answers
- * "is this the current version", and treating a previous version as somebody
- * else's code would send every upgrade through the merge path for no reason.
- */
-const SIGNATURE = 'registerOutlineView';
-
-/**
- * The sub-page field, as collection.enableSubPages(true) appends it. Added
- * through the config rather than enableSubPages() so it lands in the same single
- * save as the view (see install()).
- */
-const subPageField = (collectionGuid) => ({
-	id: 'parent_page', label: 'Sub-page of', many: false, read_only: false,
-	active: true, type: 'record', filter_colguid: collectionGuid,
-});
-
-const SUBPAGE = 'parent_page';
-
-/**
- * The canonical position field: siblings are ordered by it, and the view's
- * rearranging keys write it. The view finds it by id through the Outline view's
- * opts.order_field_id, so a rename doesn't unbind it. Field ids look like the
- * app's own: "f" + 14 characters of Crockford base32.
- */
-const ORDER_LABEL = 'Order';
-const newFieldId = () => {
-	const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-	const bytes = crypto.getRandomValues(new Uint8Array(14));
-	return 'f' + Array.from(bytes, b => alphabet[b % 32]).join('');
-};
-const orderFieldEntry = (id) => ({
-	id, label: ORDER_LABEL, icon: 'ti-list-tree',
-	many: false, read_only: false, active: true, type: 'number',
-});
-// Cycle guard. Only setSubPageOf() refuses cycles; an MCP or Markdown Mirror
-// edit to "Sub-page of" goes through the app's raw property write, which doesn't.
-const MAX_DEPTH = 100;
 const ROOT_CLASS = 'hier-crumbs';
 const ACTIONS_CLASS = 'hier-actions';
 const STYLE_ID = 'hier-style';
@@ -100,34 +54,9 @@ const CSS = `
 #${PICKER_ID} .hier-empty { padding: 10px 14px; opacity: .55; }
 `;
 
-/** The view entry install() writes. Uninstall removes only views matching isOurView(). */
-const VIEW_ENTRY = {
-	id: 'outline', label: 'Outline', type: 'custom',
-	icon: 'ti-list-tree', shown: true, description: '', query: '',
-	read_only: false, opts: {}, field_ids: ['title'],
-	group_by_field_id: null, sort_field_id: 'title', sort_dir: 'asc',
-};
-
-/** Ours if it has the id or label install() writes (a renamed view keeps its id). */
-const isOurView = (v) => v.type === 'custom'
-	&& (v.id === VIEW_ENTRY.id || v.label === VIEW_ENTRY.label);
-
-const isStub = (code) => !code
-	|| !code.trim()
-	|| code.includes('// Put your custom code here');
-
-class Plugin extends AppPlugin {
+export class Plugin extends AppPlugin {
 
 	onLoad() {
-		this.ui.registerCustomPanelType(PANEL_ID, (panel) => {
-			panel.setTitle('Install Outline view');
-			this.render(panel);
-		});
-		this.ui.addCommandPaletteCommand({
-			label: 'Outline: install into a collection...',
-			icon: 'ti-list-tree',
-			onSelected: () => this.open(),
-		});
 		this.loadHierarchy();
 	}
 
@@ -137,11 +66,6 @@ class Plugin extends AppPlugin {
 		for (const obs of this._observers?.values() || []) obs.disconnect();
 		document.querySelectorAll(`.${ROOT_CLASS}, .${ACTIONS_CLASS}, #${PICKER_ID}, .hier-menu`).forEach((n) => n.remove());
 		document.getElementById(STYLE_ID)?.remove();
-	}
-
-	async open() {
-		const panel = await this.ui.createPanel();
-		if (panel) panel.navigateToCustomType(PANEL_ID);
 	}
 
 	// --- inspection ---------------------------------------------------------
@@ -175,195 +99,14 @@ class Plugin extends AppPlugin {
 	 * against data that cannot be stale — and it is what the view itself uses.
 	 */
 	hasSubPages(api) {
-		return (api.getConfiguration().fields || [])
-			.some(f => f.id === 'parent_page' && f.active !== false);
+		return subPagesOn(api.getConfiguration());
 	}
 
-	/** Whether every Outline view is bound to an active number field (opts.order_field_id). */
-	hasOrder(api) {
-		const fields = api.getConfiguration().fields || [];
-		const views = this.ourViews(api);
-		return views.length > 0 && views.every(v => fields.some(f => f.id === (v.opts && v.opts.order_field_id)
-			&& f.type === 'number' && f.active !== false));
-	}
-
-	customViews(api) {
-		return (api.getConfiguration().views || []).filter(v => v.type === 'custom');
-	}
-
+	/** The collection's Outline views, if its code slot holds the Outline code. */
 	ourViews(api) {
-		return (api.getConfiguration().views || []).filter(isOurView);
-	}
-
-	/**
-	 * Why the code state matters: saveCode() REPLACES a collection's plugin code
-	 * outright — there is no merge. Overwriting a collection that has formulas or
-	 * a custom record title would delete them, so anything that isn't empty, the
-	 * default stub, or our own source goes through the editor instead.
-	 */
-	codeState(api) {
 		const code = (api.getExistingCodeAndConfig() || {}).code || '';
-		if (code.trim() === VIEW_SOURCE.trim()) return 'current';
-		if (code.includes(SIGNATURE)) return 'outdated';
-		if (isStub(code)) return 'free';
-		return 'occupied';
-	}
-
-	status(api) {
-		return {
-			guid: api.getGuid(),
-			name: api.getName(),
-			subPages: this.hasSubPages(api),
-			ours: this.ourViews(api).length,
-			ordered: this.hasOrder(api),
-			code: this.codeState(api),
-		};
-	}
-
-	// --- actions ------------------------------------------------------------
-
-	/**
-	 * Brings a collection to: sub-pages on, an Order property, one Outline view
-	 * sorted by it and bound to it (opts.order_field_id), the current code.
-	 * Running it twice changes nothing the second time.
-	 */
-	async install(guid, log) {
-		let api = this.resolve(guid);
-		if (!api) { log('That collection is gone.'); return; }
-
-		// The code is checked BEFORE anything is written. A collection whose plugin
-		// slot belongs to somebody else gets no schema change at all — writing the
-		// field and the view first and then bailing out left a half-installed
-		// collection carrying a view its own plugin does not render.
-		if (this.codeState(api) === 'occupied') {
-			log('This collection already has plugin code of its own.');
-			log('Opening the editor so you can merge it yourself. Nothing was written.');
-			const existing = api.getExistingCodeAndConfig() || {};
-			api.previewPlugin(api.getConfiguration(), VIEW_SOURCE, existing.css || '', true);
-			return;
-		}
-
-		const conf = api.getConfiguration();
-		let changed = false;
-		if (!this.hasSubPages(api)) {
-			log('Turning on sub-pages...');
-			// An archived field is reactivated in place: enableSubPages(false)
-			// deletes the field outright, so this is only a hand-edited config.
-			const old = (conf.fields || []).find(f => f.id === SUBPAGE);
-			if (old) old.active = true;
-			else conf.fields = (conf.fields || []).concat([subPageField(guid)]);
-			changed = true;
-		}
-		// The Order field: the one an Outline view is bound to, else an existing
-		// number field named Order (reactivated if archived, so its values come
-		// back), else a new one.
-		const fields = conf.fields || [];
-		const bound = this.ourViews(api).map(v => v.opts && v.opts.order_field_id).find(Boolean);
-		let order = fields.find(f => f.id === bound && f.type === 'number')
-			|| fields.find(f => f.type === 'number' && (f.label || '').trim().toLowerCase() === ORDER_LABEL.toLowerCase());
-		if (!order) {
-			log(`Adding the ${ORDER_LABEL} property...`);
-			const taken = new Set(fields.map(f => f.id));
-			let id;
-			do id = newFieldId(); while (taken.has(id));
-			order = orderFieldEntry(id);
-			conf.fields = fields.concat([order]);
-			changed = true;
-		} else if (order.active === false) {
-			log(`Restoring the ${order.label} property...`);
-			order.active = true;
-			changed = true;
-		}
-
-		if (!this.ourViews(api).length) {
-			log(`Adding the Outline view, sorted by ${order.label}...`);
-			const taken = new Set((conf.views || []).map(v => v.id));
-			let id = VIEW_ENTRY.id;
-			for (let n = 2; taken.has(id); n++) id = `${VIEW_ENTRY.id}${n}`;
-			conf.views = (conf.views || []).concat([Object.assign({}, VIEW_ENTRY, {
-				id, sort_field_id: order.id, sort_dir: 'asc', opts: { order_field_id: order.id },
-			})]);
-			changed = true;
-		} else {
-			// An Outline view from before the Order binding: bind it, leaving its
-			// sort alone (the user may have chosen one).
-			for (const v of conf.views.filter(isOurView)) {
-				if (v.opts && v.opts.order_field_id === order.id) continue;
-				log(`Binding the Outline view to ${order.label}...`);
-				v.opts = Object.assign({}, v.opts, { order_field_id: order.id });
-				changed = true;
-			}
-		}
-
-		// Every config change goes in ONE save. Writes are not readable in the same
-		// tick, so appending the sub-page field and then re-reading the config
-		// returns the copy from BEFORE it — saving that back silently drops the
-		// field again, which is exactly how a collection ends up with the view
-		// installed and no nesting.
-		if (changed) {
-			// A refused save is reported as a refusal. saveConfiguration() returns
-			// false when the user lacks permission on this collection — it does not
-			// throw — so an unchecked call reports success and writes nothing.
-			if (!await api.saveConfiguration(conf)) {
-				log('The workspace refused that change — you may not have permission to edit this collection.');
-				return;
-			}
-			api = this.resolve(guid);
-			if (!api) { log('That collection is gone.'); return; }
-		}
-
-		const state = this.codeState(api);
-		if (state === 'current') {
-			log('Code is already up to date.');
-			return;
-		}
-		log(state === 'outdated' ? 'Updating the view code...' : 'Writing the view code...');
-		if (!await api.saveCode(VIEW_SOURCE)) {
-			log('The workspace refused that change — you may not have permission to edit this plugin.');
-			return;
-		}
-		log('Done. Open the collection and click the Outline tab.');
-		this.buildIndex();
-	}
-
-	/**
-	 * Removes the view. Leaves the code alone unless it is exactly ours, and
-	 * never touches the nesting or Order properties — they hold the data.
-	 */
-	async uninstall(guid, log) {
-		let api = this.resolve(guid);
-		if (!api) { log('That collection is gone.'); return; }
-
-		// Only the view this installer writes is removed. Filtering out every
-		// type:"custom" entry also deleted custom views the user had made — their
-		// label, columns and sort along with them — which is not what Remove means.
-		const mine = this.ourViews(api);
-		const others = this.customViews(api).length - mine.length;
-		if (mine.length) {
-			log(`Removing ${mine.length} Outline view(s)...`);
-			const conf = api.getConfiguration();
-			conf.views = (conf.views || []).filter(v => !isOurView(v));
-			if (!await api.saveConfiguration(conf)) {
-				log('The workspace refused that change — you may not have permission to edit this collection.');
-				return;
-			}
-			api = this.resolve(guid);
-			if (!api) { log('That collection is gone.'); return; }
-		}
-		if (others) log(`Leaving ${others} other custom view(s) alone.`);
-
-		const state = this.codeState(api);
-		if (state === 'current' || state === 'outdated') {
-			log('Clearing the view code...');
-			if (!await api.saveCode(STUB)) {
-				log('The workspace refused that change — you may not have permission to edit this plugin.');
-				return;
-			}
-		} else {
-			log('Leaving the plugin code alone — it is not the Outline source.');
-		}
-		log('Sub-pages and the Order property are untouched.');
-		this.buildIndex();
+		if (!code.includes(OUTLINE_SIGNATURE)) return [];
+		return (api.getConfiguration().views || []).filter(isOutlineView);
 	}
 
 	// --- hierarchy: breadcrumb and page commands -----------------------------
@@ -433,10 +176,11 @@ class Plugin extends AppPlugin {
 
 	async buildIndex() {
 		const index = new Map();
-		for (const api of await this.data.getAllCollections()) {
-			if (!this.hierarchyOf(api)) continue;
-			for (const r of await api.getAllRecords()) index.set(r.guid, api.getGuid());
-		}
+		const apis = (await this.data.getAllCollections()).filter(api => this.hierarchyOf(api));
+		const lists = await Promise.all(apis.map(api => api.getAllRecords()));
+		apis.forEach((api, i) => {
+			for (const r of lists[i]) index.set(r.guid, api.getGuid());
+		});
 		this._index = index;
 		this.schedule();
 	}
@@ -455,15 +199,7 @@ class Plugin extends AppPlugin {
 
 	/** Ancestors, root first. */
 	ancestors(record) {
-		const chain = [];
-		const seen = new Set([record.guid]);
-		let parent = this.parentOf(record);
-		while (parent && !seen.has(parent.guid) && chain.length < MAX_DEPTH) {
-			seen.add(parent.guid);
-			chain.unshift(parent);
-			parent = this.parentOf(parent);
-		}
-		return chain;
+		return [...ancestorsOf(record, SUBPAGE)].reverse();
 	}
 
 	schedule() {
@@ -493,6 +229,9 @@ class Plugin extends AppPlugin {
 		if (!ctx) {
 			old?.remove();
 			oldActions?.remove();
+			// Nothing to remount on this page; observe() re-attaches when there is.
+			this._observers.get(panel.getId())?.disconnect();
+			this._observers.delete(panel.getId());
 			return;
 		}
 		this.observe(panel, frame);
@@ -630,19 +369,7 @@ class Plugin extends AppPlugin {
 		const all = await a.ctx.collection.getAllRecords();
 		// Its own subtree is off limits: moving under a descendant makes a cycle,
 		// which setSubPageOf() would refuse anyway.
-		const kids = new Map();
-		for (const r of all) {
-			const p = this.parentOf(r)?.guid;
-			if (p) (kids.get(p) ?? kids.set(p, []).get(p)).push(r.guid);
-		}
-		const banned = new Set();
-		const stack = [a.record.guid];
-		while (stack.length) {
-			const g = stack.pop();
-			if (banned.has(g)) continue;
-			banned.add(g);
-			stack.push(...(kids.get(g) ?? []));
-		}
+		const banned = new Set(subtreeRecords(all, a.record, SUBPAGE).map((r) => r.guid));
 		const current = this.parentOf(a.record)?.guid ?? null;
 		const options = all
 			.filter((r) => !banned.has(r.guid) && r.guid !== current)
@@ -719,8 +446,8 @@ class Plugin extends AppPlugin {
 				const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 				const starts = terms.map((t) => new RegExp(`(^|[^\\p{L}\\p{N}])${esc(t)}`, 'iu'));
 				shown = options.filter((o) => {
-					const hay = (o.title + ' ' + o.path).toLowerCase();
-					return terms.every((t) => hay.includes(t));
+					o._hay ??= (o.title + ' ' + o.path).toLowerCase();
+					return terms.every((t) => o._hay.includes(t));
 				});
 				// Word-start hits in the title count most, then in the path; shallow before deep.
 				const score = (o) => starts.reduce((n, re) => n + (re.test(o.title) ? 3 : re.test(o.path) ? 1 : 0), 0);
@@ -756,8 +483,12 @@ class Plugin extends AppPlugin {
 					else if (shown[sel]) done(shown[sel].guid);
 				} else if (options && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
 					e.preventDefault();
-					sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % Math.max(1, shown.length);
-					draw();
+					if (!shown.length) return;
+					// Only the highlight moves; the rows are as draw() left them.
+					list.children[sel].classList.remove('is-sel');
+					sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length;
+					list.children[sel].classList.add('is-sel');
+					list.children[sel].scrollIntoView({ block: 'nearest' });
 				}
 			});
 			wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) done(undefined); });
@@ -767,123 +498,6 @@ class Plugin extends AppPlugin {
 		});
 	}
 
-	// --- panel --------------------------------------------------------------
-
-	async render(panel) {
-		const root = panel.getElement();
-		if (!root) return;
-		while (root.firstChild) root.removeChild(root.firstChild);
-
-		const wrap = el('div', root);
-		wrap.style.cssText = 'padding:24px;max-width:760px;margin:0 auto;';
-
-		const h = el('h2', wrap, 'Install the Outline view');
-		h.style.cssText = 'margin:0 0 4px;';
-		const sub = el('p', wrap, 'Pick a collection. Installing turns on sub-pages, adds an Order property and an Outline view sorted by it, and writes the view code.');
-		sub.style.cssText = 'margin:0 0 20px;opacity:.7;';
-
-		let collections = [];
-		try {
-			collections = await this.data.getAllCollections();
-		} catch (err) {
-			el('p', wrap, `Could not read collections: ${String(err)}`);
-			return;
-		}
-
-		for (const api of collections) {
-			if (api.isJournalPlugin && api.isJournalPlugin()) continue;
-			this.renderRow(wrap, api.getGuid());
-		}
-	}
-
-	/**
-	 * Each collection owns a box that repaints itself. Actions redraw it when they
-	 * finish, so the summary and the buttons describe the collection as it is now
-	 * rather than as it was when the panel opened.
-	 *
-	 * Rows carry a GUID, never a plugin handle: a handle held across a write goes
-	 * stale (see resolve()), so both the reads behind the summary and the writes
-	 * behind the buttons have to start from a fresh one.
-	 */
-	renderRow(parent, guid) {
-		const box = el('div', parent);
-		box.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--border-color,rgba(128,128,128,.25));';
-		this.paintRow(box, guid, []);
-	}
-
-	paintRow(box, guid, notes) {
-		while (box.firstChild) box.removeChild(box.firstChild);
-		const api = this.resolve(guid);
-		if (!api) return;
-		const s = this.status(api);
-
-		const left = el('div', box);
-		left.style.cssText = 'flex:1;min-width:0;';
-		const title = el('div', left, s.name);
-		title.style.cssText = 'font-weight:600;';
-
-		const bits = [];
-		bits.push(s.subPages ? 'sub-pages on' : 'sub-pages off');
-		bits.push(s.ours ? 'Outline view' : 'no Outline view');
-		if (s.ours && !s.ordered) bits.push('no Order property');
-		bits.push(s.code === 'current' ? 'view installed'
-			: s.code === 'outdated' ? 'older version installed'
-			: s.code === 'free' ? 'plugin slot empty'
-			: 'has other plugin code');
-		const meta = el('div', left, bits.join(' \u00b7 '));
-		meta.style.cssText = 'font-size:12px;opacity:.7;margin-top:2px;';
-
-		if (s.code === 'occupied') {
-			const warn = el('div', left, 'Installing here opens the code editor so you can merge by hand. Your code is not overwritten.');
-			warn.style.cssText = 'font-size:12px;margin-top:4px;color:var(--enum-orange-fg,#c60);';
-		}
-
-		for (const note of notes) {
-			const line = el('div', left, note);
-			line.style.cssText = 'font-size:12px;margin-top:4px;opacity:.85;';
-		}
-
-		const run = (label, fn, primary) => {
-			const btn = el('button', box, label);
-			if (primary) btn.className = 'button-primary';
-			btn.addEventListener('click', async () => {
-				btn.disabled = true;
-				const log = [];
-				const push = (m) => { log.push(m); this.paintRow(box, guid, log); };
-				try { await fn(guid, push); }
-				catch (err) { log.push(`Failed: ${String(err)}`); }
-				// Repaint once more: the status above was computed before the writes.
-				this.paintRow(box, guid, log);
-				// And again on a timer, because the CODE half of the status reads
-				// back stale for a moment after saveCode() even from a freshly
-				// resolved handle: the rebuilt plugin instance substitutes the
-				// default stub when the code is not in place yet (`f || (f = ma)` in
-				// the app's plugin factory), so the row claimed "plugin slot empty"
-				// and offered Install on a collection it had just finished
-				// installing — no Remove button until the panel was reopened. The
-				// config half is current immediately; only this needs the wait.
-				setTimeout(() => this.paintRow(box, guid, log), 500);
-			});
-			return btn;
-		};
-
-		// The action button says what it will actually do, and is dropped entirely
-		// when there is nothing to do — a button whose only outcome is "already up
-		// to date" is worse than no button.
-		const ours = s.code === 'current' || s.code === 'outdated';
-		const present = s.ours > 0 && ours;
-		const complete = present && s.subPages && s.ordered && s.code === 'current';
-
-		if (!complete) {
-			run(s.code === 'outdated' ? 'Update' : present ? 'Repair' : 'Install',
-				(g, l) => this.install(g, l), true);
-		}
-		if (present) run('Remove', (g, l) => this.uninstall(g, l), false);
-		if (complete) {
-			const ok = el('div', box, 'Installed');
-			ok.style.cssText = 'font-size:12px;opacity:.6;align-self:center;';
-		}
-	}
 }
 
 /** Small DOM helper. textContent only — plugin code must never build markup. */

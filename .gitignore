@@ -3,12 +3,18 @@
 /bin/thymercli
 /examples
 
-# deps / build output — except each built bundle, the only pasteable forms
+# deps / build output — except the two paste-ready bundles
 node_modules/
-dist/*
-!dist/plugin.js
-installer/dist/*
-!installer/dist/plugin.js
+dist/
+!global/dist/
+global/dist/*
+!global/dist/plugin.js
+!collection/dist/
+collection/dist/*
+!collection/dist/plugin.js
+
+# one workspace's per-collection extras and their builds (collection/deploy.mjs)
+/local/
 
 # browser-automation output / OS
 .playwright-mcp/
