@@ -522,6 +522,8 @@ var plugins = (() => {
     let peekedGuid = null;
     let propMode = null;
     let pendingNameEditGuid = null;
+    let $inlineInput = null;
+    let renderHeld = false;
     let placingGuid = null;
     let win = { start: 0, end: 0 };
     const heightCache = /* @__PURE__ */ new Map();
@@ -1272,11 +1274,14 @@ var plugins = (() => {
       $input.className = "outline-inline-input";
       $input.value = value || "";
       let done = false;
+      $inlineInput = $input;
       const finish = /* @__PURE__ */ __name((commit) => {
         if (done) return;
         done = true;
+        $inlineInput = null;
         if (commit) onCommit($input.value.trim());
         else if (onCancel) onCancel();
+        if (renderHeld) afterWrite();
         syncKeyHints();
       }, "finish");
       $input.addEventListener("keydown", (e) => {
@@ -1600,6 +1605,11 @@ var plugins = (() => {
     }, "ensureRendered");
     const renderRows = /* @__PURE__ */ __name(() => {
       if (!$list) return;
+      if ($inlineInput && $inlineInput.isConnected) {
+        renderHeld = true;
+        return;
+      }
+      renderHeld = false;
       renderFields = visibleFields();
       const heldScroll = (scrollers || []).map((el) => [el, el.scrollTop]);
       $list.innerHTML = "";

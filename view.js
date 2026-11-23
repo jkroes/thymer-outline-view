@@ -654,6 +654,9 @@ export function createOutlineView(viewContext, host, hints) {
 	let propMode = null;
 	/** guid of a just-created record whose name opens for editing on the next render */
 	let pendingNameEditGuid = null;
+	/** The open inline input (a name or a field), if any; redraws wait for it (see renderRows). */
+	let $inlineInput = null;
+	let renderHeld = false;
 	/** guid of a record createBeside() made and hasn't placed yet; refreshes showing it wait */
 	let placingGuid = null;
 
@@ -1750,11 +1753,15 @@ export function createOutlineView(viewContext, host, hints) {
 		$input.className = 'outline-inline-input';
 		$input.value = value || '';
 		let done = false;
+		$inlineInput = $input;
 		const finish = (commit) => {
 			if (done) return;
 			done = true;
+			$inlineInput = null;
 			if (commit) onCommit($input.value.trim());
 			else if (onCancel) onCancel();
+			// Redraws that arrived mid-edit were held back (see renderRows).
+			if (renderHeld) afterWrite();
 			syncKeyHints();
 		};
 		$input.addEventListener('keydown', (e) => {
@@ -2153,6 +2160,11 @@ export function createOutlineView(viewContext, host, hints) {
 
 	const renderRows = () => {
 		if (!$list) return;
+		// A redraw empties the list, which would take an open inline input
+		// with it: a refresh landing just after a new page's name opened
+		// closed it again. Hold the redraw until the edit ends.
+		if ($inlineInput && $inlineInput.isConnected) { renderHeld = true; return; }
+		renderHeld = false;
 		renderFields = visibleFields();
 		// Emptying the list lets the panel's scroll position collapse to the
 		// top; hold it, so a redraw (a fold, a refresh) leaves the view where
