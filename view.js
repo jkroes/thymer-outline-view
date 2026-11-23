@@ -422,6 +422,7 @@ function keyHints(mode, zoomed, itemName) {
 		['R', 'Rename', mono],
 		[`${cmd}↵`, 'Open Aside', mono],
 		[`${shift}↵`, `Create ${itemName}`, mono],
+		[IS_MAC ? '⌥↵' : 'Alt+↵', 'Create Above', mono],
 		hint('collection.trash_record', mono),
 		['E', 'Edit', mono],
 		['⇥', 'Indent', mono],
@@ -653,6 +654,8 @@ export function createOutlineView(viewContext, host, hints) {
 	let propMode = null;
 	/** guid of a just-created record whose name opens for editing on the next render */
 	let pendingNameEditGuid = null;
+	/** guid of a record createBeside() made and hasn't placed yet; refreshes showing it wait */
+	let placingGuid = null;
 
 	// Windowed rendering: only the rows near the viewport exist in the DOM,
 	// between two spacers sized from measured (or estimated) row heights.
@@ -1679,6 +1682,61 @@ export function createOutlineView(viewContext, host, hints) {
 		}
 		follow(node.id);
 		renderRows();
+	};
+
+	/**
+	 * Shift+Enter and Alt+Enter, native's "create a card below / above": a
+	 * new page as the sibling just after or before the selected row. The
+	 * SDK can't create at a position, so the page is created, then given
+	 * the row's parent and its place in Order; nothing is drawn until both
+	 * have landed, then its name opens. Where a place can't be given (a
+	 * search, no Order, another sort, the zoom root) 'above' says why and
+	 * 'below' creates the page unplaced, as it always did.
+	 */
+	const createBeside = async (where) => {
+		const current = rows[selectedIndex];
+		if (!current || !hierarchy || placingGuid) return;
+		const node = current.node;
+		const refuse = (title, message) => {
+			if (where === 'below') createRecord();
+			else if (title) toast(title, message);
+		};
+		if (contextGuids.size || searchOpen) {
+			refuse('Clear the search to create above', 'With a search or filter on, the outline shows only part of each level.');
+			return;
+		}
+		// The zoom root's siblings aren't on screen.
+		if (node.id === zoomGuid) { refuse(); return; }
+		const parent = parentOf(node);
+		const siblings = childList(parent);
+		const ord = orderField();
+		if (!ord) {
+			refuse('No Order property', 'Run "Outline: install into a collection…" to add one; a new page\'s place is stored there.');
+			return;
+		}
+		if (!followsOrder(siblings, ord)) {
+			refuse(`Sort by ${ord.label} to create above`, `The rows aren't in ${ord.label} order, so the new page's place wouldn't show.`);
+			return;
+		}
+		const guid = viewContext.createRecord();
+		if (!guid) return;
+		placingGuid = guid;
+		// A record created this tick isn't readable yet; wait for it.
+		let record = null;
+		for (let i = 0; i < 30 && !record; i++) {
+			record = (await plugin.collection.getAllRecords()).find(r => r.guid === guid);
+			if (!record) await new Promise(r => setTimeout(r, 100));
+		}
+		placingGuid = null;
+		if (!record) { rebuild(); return; }
+		if (parent && writeParent({ record }, parent)) notePending(guid, 'parent', parent.id);
+		positionWrites({ id: guid, record }, siblings, siblings.indexOf(node) + (where === 'below' ? 1 : 0), ord).forEach(({ node: n, value }) => {
+			n.record.prop(ord.id).set(value);
+			notePending(n.id, 'order', value);
+		});
+		// The refresh that shows every write draws the row and opens its name.
+		pendingNameEditGuid = guid;
+		follow(guid);
 	};
 
 	/**
@@ -2753,6 +2811,8 @@ export function createOutlineView(viewContext, host, hints) {
 			// Mid-move: the screen already shows the result; skip the
 			// in-between states (see `pending`).
 			if (pending.size && !settled(records)) return;
+			// A page createBeside() hasn't placed yet would show at the top level first.
+			if (placingGuid && records.some(r => r.guid === placingGuid)) return;
 			rebuild();
 		},
 
@@ -2853,7 +2913,13 @@ export function createOutlineView(viewContext, host, hints) {
 
 			if (e.key === 'Enter' && e.shiftKey) {
 				e.preventDefault();
-				createRecord();
+				createBeside('below');
+				return;
+			}
+
+			if (e.key === 'Enter' && e.altKey && !e.metaKey && !e.ctrlKey) {
+				e.preventDefault();
+				createBeside('above');
 				return;
 			}
 

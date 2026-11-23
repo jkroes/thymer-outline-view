@@ -10,20 +10,23 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
-export function build({ extras = join(here, 'no-extras.js'), out = join(here, 'dist', 'plugin.js') } = {}) {
-	extras = resolve(extras);
+export function build({ extras, out = join(here, 'dist', 'plugin.js') } = {}) {
+	const merged = Boolean(extras);
+	extras = resolve(extras || join(here, 'no-extras.js'));
 	out = resolve(out);
 	statSync(extras); // a missing extras file should fail here, not as an esbuild error
 	mkdirSync(dirname(out), { recursive: true });
 	execFileSync(join(root, 'sdk', 'node_modules', '.bin', 'esbuild'), [
 		join(here, 'plugin.js'), '--bundle', '--format=iife', '--global-name=plugins', '--keep-names',
 		`--alias:outline-extras=${extras}`, `--outfile=${out}`, '--log-level=warning',
+		// How the global plugin's installer knows not to write over this build.
+		...(merged ? [`--banner:js=/* outline-extras: ${basename(extras)} */`] : []),
 	], { cwd: root, stdio: 'inherit' });
 	return out;
 }

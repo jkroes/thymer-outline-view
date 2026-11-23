@@ -1,10 +1,13 @@
 /**
- * Outline — the global half of the Outline plugin: page features for every
- * collection that has an Outline view.
+ * Outline — the global half of the Outline plugin: the installer, and page
+ * features for every collection that has an Outline view.
  *
- * The view itself is collection code (../collection/plugin.js), pasted or
- * deployed into each collection's own plugin slot. This plugin adds what works
- * outside the view, on every page of such a collection:
+ * The view itself is collection code (../collection/plugin.js) in each
+ * collection's own plugin slot. The installer panel walks your collections, shows
+ * what state each one is in, and does the setup for you: turn on sub-pages, add
+ * an Order property and an Outline view, write the collection code. It never
+ * replaces code it didn't write. On every page of a collection with an Outline
+ * view this plugin also adds what works outside the view:
  *
  *   - Breadcrumb: Root › … › Parent, after the collection pill above the title.
  *   - Show this page: open the Outline view zoomed into the page, its row selected.
@@ -14,11 +17,64 @@
  * nothing to configure. Nothing derived is stored: ancestors are walked live
  * through linkedRecord().
  *
- * Module-style source: `./build.sh global` bundles it with what it shares with
- * the view (../view.js), so it will not run until built.
+ * Module-style source: `node global/build.mjs` bundles it with what it shares
+ * with the view (../view.js) and embeds the built collection code, so it will
+ * not run until built. Nothing is fetched at runtime.
  */
 
 import { SUBPAGE, OUTLINE_SIGNATURE, ancestorsOf, isOutlineView, subPagesOn, subtreeRecords } from '../view.js';
+// The built collection code (collection/dist/plugin.js) as text: what Install
+// writes into a collection. global/build.mjs points this name at it.
+import VIEW_SOURCE from 'outline-collection-code';
+
+const PANEL_ID = 'outline-installer';
+
+/** What a collection's plugin slot looks like when nobody has touched it. */
+const STUB = 'class Plugin extends CollectionPlugin {\n  onLoad() {\n    // Put your custom code here...\n  }\n}\n';
+
+const isStub = (code) => !code || !code.trim() || code.includes('// Put your custom code here');
+
+/**
+ * The comment collection/build.mjs puts at the top of a build made with
+ * --extras. Such a slot holds the Outline code AND somebody's additions, so the
+ * installer never writes over it; it is updated by rebuilding.
+ */
+const EXTRAS_MARKER = 'outline-extras:';
+
+/**
+ * The sub-page field, as collection.enableSubPages(true) appends it. Added
+ * through the config rather than enableSubPages() so it lands in the same single
+ * save as the view (see install()).
+ */
+const subPageField = (collectionGuid) => ({
+	id: SUBPAGE, label: 'Sub-page of', many: false, read_only: false,
+	active: true, type: 'record', filter_colguid: collectionGuid,
+});
+
+/**
+ * The canonical position field: siblings are ordered by it, and the view's
+ * rearranging keys write it. The view finds it by id through the Outline view's
+ * opts.order_field_id, so a rename doesn't unbind it. Field ids look like the
+ * app's own: "f" + 14 characters of Crockford base32.
+ */
+const ORDER_LABEL = 'Order';
+const newFieldId = () => {
+	const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+	const bytes = crypto.getRandomValues(new Uint8Array(14));
+	return 'f' + Array.from(bytes, b => alphabet[b % 32]).join('');
+};
+const orderFieldEntry = (id) => ({
+	id, label: ORDER_LABEL, icon: 'ti-list-tree',
+	many: false, read_only: true, active: true, type: 'number',
+});
+
+/** The view entry Install writes. */
+const VIEW_ENTRY = {
+	id: 'outline', label: 'Outline', type: 'custom',
+	icon: 'ti-list-tree', shown: true, description: '', query: '',
+	read_only: false, opts: {}, field_ids: ['title'],
+	group_by_field_id: null, sort_field_id: 'title', sort_dir: 'asc',
+};
 
 const ROOT_CLASS = 'hier-crumbs';
 const ACTIONS_CLASS = 'hier-actions';
@@ -57,7 +113,21 @@ const CSS = `
 export class Plugin extends AppPlugin {
 
 	onLoad() {
+		this.ui.registerCustomPanelType(PANEL_ID, (panel) => {
+			panel.setTitle('Install Outline view');
+			this.render(panel);
+		});
+		this.ui.addCommandPaletteCommand({
+			label: 'Outline: install into a collection...',
+			icon: 'ti-list-tree',
+			onSelected: () => this.open(),
+		});
 		this.loadHierarchy();
+	}
+
+	async open() {
+		const panel = await this.ui.createPanel();
+		if (panel) panel.navigateToCustomType(PANEL_ID);
 	}
 
 	onUnload() {
@@ -104,9 +174,207 @@ export class Plugin extends AppPlugin {
 
 	/** The collection's Outline views, if its code slot holds the Outline code. */
 	ourViews(api) {
-		const code = (api.getExistingCodeAndConfig() || {}).code || '';
-		if (!code.includes(OUTLINE_SIGNATURE)) return [];
+		if (!this.code(api).includes(OUTLINE_SIGNATURE)) return [];
 		return (api.getConfiguration().views || []).filter(isOutlineView);
+	}
+
+	code(api) {
+		return (api.getExistingCodeAndConfig() || {}).code || '';
+	}
+
+	/**
+	 * What the collection's code slot holds:
+	 *
+	 *   'current'   this build of the Outline code
+	 *   'outdated'  another build of it
+	 *   'merged'    the Outline code with somebody's additions built in
+	 *   'free'      nothing, or the app's placeholder
+	 *   'occupied'  somebody else's code
+	 *
+	 * Why it matters: saveCode() REPLACES a collection's code outright, there is
+	 * no merge. Writing over a collection that has formulas or a custom record
+	 * title would delete them, so only 'free', 'outdated' and 'current' slots are
+	 * ever written.
+	 */
+	codeState(api) {
+		const code = this.code(api);
+		if (code.trim() === VIEW_SOURCE.trim()) return 'current';
+		if (code.includes(OUTLINE_SIGNATURE)) return code.includes(EXTRAS_MARKER) ? 'merged' : 'outdated';
+		return isStub(code) ? 'free' : 'occupied';
+	}
+
+	status(api) {
+		return {
+			name: api.getName(),
+			subPages: this.hasSubPages(api),
+			views: (api.getConfiguration().views || []).filter(isOutlineView).length,
+			// What Install would still change in the config; empty when it's all set up.
+			steps: this.plan(api).steps,
+			code: this.codeState(api),
+		};
+	}
+
+	// --- installer actions --------------------------------------------------
+
+	/**
+	 * What Install would change in a collection's config to reach: sub-pages on,
+	 * an active read-only Order property, and an Outline view sorted by it and
+	 * bound to it (opts.order_field_id). `conf` is a copy of the config with those
+	 * changes made, `steps` one entry per change: what it concerns and the line
+	 * Install logs for it. No steps: nothing to change. The status row and
+	 * install() both read this, so they can't disagree.
+	 */
+	plan(api) {
+		const conf = JSON.parse(JSON.stringify(api.getConfiguration()));
+		const steps = [];
+		const ours = (conf.views || []).filter(isOutlineView);
+		if (!subPagesOn(conf)) {
+			steps.push({ what: 'subpages', log: 'Turning on sub-pages...' });
+			// An archived field is reactivated in place: enableSubPages(false)
+			// deletes the field outright, so this is only a hand-edited config.
+			const old = (conf.fields || []).find(f => f.id === SUBPAGE);
+			if (old) old.active = true;
+			else conf.fields = (conf.fields || []).concat([subPageField(api.getGuid())]);
+		}
+		// The Order field: the one an Outline view is bound to, else an existing
+		// number field named Order (reactivated if archived, so its values come
+		// back), else a new one.
+		const fields = conf.fields || [];
+		const bound = ours.map(v => v.opts && v.opts.order_field_id).find(Boolean);
+		let order = fields.find(f => f.id === bound && f.type === 'number')
+			|| fields.find(f => f.type === 'number' && (f.label || '').trim().toLowerCase() === ORDER_LABEL.toLowerCase());
+		if (!order) {
+			steps.push({ what: 'order', log: `Adding the ${ORDER_LABEL} property...` });
+			const taken = new Set(fields.map(f => f.id));
+			let id;
+			do id = newFieldId(); while (taken.has(id));
+			order = orderFieldEntry(id);
+			conf.fields = fields.concat([order]);
+		} else if (order.active === false) {
+			steps.push({ what: 'order', log: `Restoring the ${order.label} property...` });
+			order.active = true;
+		}
+		// Read-only locks the app's own editors only: the view's rearranging keys
+		// still write it, and nobody types over a position in a table cell.
+		if (order.read_only !== true) {
+			steps.push({ what: 'order', log: `Making the ${order.label} property read-only...` });
+			order.read_only = true;
+		}
+
+		if (!ours.length) {
+			steps.push({ what: 'view', log: `Adding the Outline view, sorted by ${order.label}...` });
+			const taken = new Set((conf.views || []).map(v => v.id));
+			let id = VIEW_ENTRY.id;
+			for (let n = 2; taken.has(id); n++) id = `${VIEW_ENTRY.id}${n}`;
+			conf.views = (conf.views || []).concat([Object.assign({}, VIEW_ENTRY, {
+				id, sort_field_id: order.id, sort_dir: 'asc', opts: { order_field_id: order.id },
+			})]);
+		} else {
+			// An Outline view not bound to Order yet: bind it, leaving its sort alone
+			// (the user may have chosen one).
+			for (const v of ours) {
+				const opts = v.opts || {};
+				if (opts.order_field_id === order.id) continue;
+				steps.push({ what: 'order', log: `Binding the ${v.label} view to ${order.label}...` });
+				v.opts = Object.assign({}, opts, { order_field_id: order.id });
+			}
+		}
+		return { conf, steps };
+	}
+
+	/**
+	 * Brings a collection to: sub-pages on, an Order property, one Outline view
+	 * sorted by it and bound to it (opts.order_field_id), the current code.
+	 * Running it twice changes nothing the second time.
+	 */
+	async install(guid, log) {
+		let api = this.resolve(guid);
+		if (!api) { log('That collection is gone.'); return; }
+
+		// The code is checked BEFORE anything is written. A collection whose slot
+		// belongs to somebody else gets no schema change at all: writing the field
+		// and the view first and then bailing out left a half-installed collection
+		// carrying a view its own code does not draw.
+		if (this.codeState(api) === 'occupied') {
+			log('This collection has code of its own, and installing would replace it. Nothing was written.');
+			return;
+		}
+
+		// Every config change goes in ONE save. Writes are not readable in the same
+		// tick, so appending the sub-page field and then re-reading the config
+		// returns the copy from BEFORE it; saving that back silently drops the
+		// field again, which is how a collection ends up with the view installed
+		// and no nesting.
+		const { conf, steps } = this.plan(api);
+		for (const step of steps) log(step.log);
+		if (steps.length) {
+			api = await this.saveConfig(api, conf, guid, log);
+			if (!api) return;
+		}
+
+		const state = this.codeState(api);
+		if (state === 'merged') {
+			log('Left the code alone: it has other code merged in. Update it by rebuilding with your additions.');
+		} else if (state === 'current') {
+			log('Code is already up to date.');
+		} else {
+			log(state === 'outdated' ? 'Updating the view code...' : 'Writing the view code...');
+			if (!await this.writeCode(api, VIEW_SOURCE, log)) return;
+			log('Done. Open the collection and click the Outline tab.');
+		}
+		this.buildIndex();
+	}
+
+	/**
+	 * Save a collection config and hand back a fresh handle (the old one is
+	 * stale after any write), or null after logging why not. A refused save is
+	 * reported as a refusal: saveConfiguration() returns false when the user
+	 * lacks permission on the collection, it does not throw, so an unchecked
+	 * call reports success and writes nothing.
+	 */
+	async saveConfig(api, conf, guid, log) {
+		if (!await api.saveConfiguration(conf)) {
+			log('The workspace refused that change. You may not have permission to edit this collection.');
+			return null;
+		}
+		const fresh = this.resolve(guid);
+		if (!fresh) log('That collection is gone.');
+		return fresh;
+	}
+
+	/** Write the collection's plugin code; false, after logging, when the app refuses. */
+	async writeCode(api, source, log) {
+		if (await api.saveCode(source)) return true;
+		log('The workspace refused that change. You may not have permission to edit this plugin.');
+		return false;
+	}
+
+	/**
+	 * Removes the Outline views, and the code when it is only the Outline code.
+	 * Never touches sub-pages or the Order property: they hold the data.
+	 */
+	async uninstall(guid, log) {
+		let api = this.resolve(guid);
+		if (!api) { log('That collection is gone.'); return; }
+
+		// Read before the views go: without one, nothing says the slot is ours.
+		const state = this.codeState(api);
+		const conf = api.getConfiguration();
+		const mine = (conf.views || []).filter(isOutlineView);
+		if (mine.length) {
+			log(`Removing ${mine.length} Outline view(s)...`);
+			conf.views = conf.views.filter(v => !isOutlineView(v));
+			api = await this.saveConfig(api, conf, guid, log);
+			if (!api) return;
+		}
+		if (state === 'current' || state === 'outdated') {
+			log('Clearing the view code...');
+			if (!await this.writeCode(api, STUB, log)) return;
+		} else {
+			log('Left the code alone: it is not only the Outline code.');
+		}
+		log('Sub-pages and the Order property are untouched.');
+		this.buildIndex();
 	}
 
 	// --- hierarchy: breadcrumb and page commands -----------------------------
@@ -498,6 +766,129 @@ export class Plugin extends AppPlugin {
 		});
 	}
 
+	// --- installer panel ----------------------------------------------------
+
+	async render(panel) {
+		const root = panel.getElement();
+		if (!root) return;
+		while (root.firstChild) root.removeChild(root.firstChild);
+
+		const wrap = el('div', root);
+		wrap.style.cssText = 'padding:24px;max-width:760px;margin:0 auto;';
+
+		const h = el('h2', wrap, 'Install the Outline view');
+		h.style.cssText = 'margin:0 0 4px;';
+		const sub = el('p', wrap, 'Pick a collection. Installing turns on sub-pages, adds an Order property and an Outline view sorted by it, and writes the view code.');
+		sub.style.cssText = 'margin:0 0 20px;opacity:.7;';
+
+		let collections = [];
+		try {
+			collections = await this.data.getAllCollections();
+		} catch (err) {
+			el('p', wrap, `Could not read collections: ${String(err)}`);
+			return;
+		}
+
+		for (const api of collections) {
+			if (api.isJournalPlugin && api.isJournalPlugin()) continue;
+			this.renderRow(wrap, api.getGuid());
+		}
+	}
+
+	/**
+	 * Each collection owns a box that repaints itself. Actions redraw it when they
+	 * finish, so the summary and the buttons describe the collection as it is now
+	 * rather than as it was when the panel opened.
+	 *
+	 * Rows carry a GUID, never a plugin handle: a handle held across a write goes
+	 * stale (see resolve()), so both the reads behind the summary and the writes
+	 * behind the buttons have to start from a fresh one.
+	 */
+	renderRow(parent, guid) {
+		const box = el('div', parent);
+		box.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--border-color,rgba(128,128,128,.25));';
+		this.paintRow(box, guid, []);
+	}
+
+	paintRow(box, guid, notes) {
+		while (box.firstChild) box.removeChild(box.firstChild);
+		const api = this.resolve(guid);
+		if (!api) return;
+		const s = this.status(api);
+
+		const left = el('div', box);
+		left.style.cssText = 'flex:1;min-width:0;';
+		const title = el('div', left, s.name);
+		title.style.cssText = 'font-weight:600;';
+
+		const bits = [];
+		bits.push(s.subPages ? 'sub-pages on' : 'sub-pages off');
+		bits.push(s.views ? 'Outline view' : 'no Outline view');
+		if (s.views && s.steps.some(step => step.what === 'order')) bits.push('Order property not set up');
+		bits.push({
+			current: 'view code installed',
+			outdated: 'older view code installed',
+			merged: 'view code installed, with other code merged in',
+			free: 'no code',
+			occupied: 'has other code',
+		}[s.code]);
+		const meta = el('div', left, bits.join(' \u00b7 '));
+		meta.style.cssText = 'font-size:12px;opacity:.7;margin-top:2px;';
+
+		const caution = s.code === 'occupied'
+			? 'This collection has code of its own, and a collection holds only one piece of code, so Outline can\'t be installed here without replacing it. To have both, build the Outline code with yours merged in (README: "Other code in the same collection") and paste that in; this row then offers the rest of the setup.'
+			: s.code === 'merged'
+				? 'The installer sets up the properties and the view here but never writes this code. Update it by rebuilding with your additions.'
+				: '';
+		if (caution) {
+			const warn = el('div', left, caution);
+			warn.style.cssText = 'font-size:12px;margin-top:4px;color:var(--enum-orange-fg,#c60);';
+		}
+
+		for (const note of notes) {
+			const line = el('div', left, note);
+			line.style.cssText = 'font-size:12px;margin-top:4px;opacity:.85;';
+		}
+		if (s.code === 'occupied') return;
+
+		const run = (label, fn, primary) => {
+			const btn = el('button', box, label);
+			if (primary) btn.className = 'button-primary';
+			btn.addEventListener('click', async () => {
+				btn.disabled = true;
+				const log = [];
+				const push = (m) => { log.push(m); this.paintRow(box, guid, log); };
+				try { await fn(guid, push); }
+				catch (err) { log.push(`Failed: ${String(err)}`); }
+				// Repaint once more: the status above was computed before the writes.
+				this.paintRow(box, guid, log);
+				// And again on a timer, because the CODE half of the status reads
+				// back stale for a moment after saveCode() even from a freshly
+				// resolved handle: the rebuilt plugin instance substitutes the
+				// default stub when the code is not in place yet, so the row said
+				// "no code" and offered Install on a collection it had just
+				// finished installing. The config half is current immediately.
+				setTimeout(() => this.paintRow(box, guid, log), 500);
+			});
+			return btn;
+		};
+
+		// The action button says what it will actually do, and is dropped entirely
+		// when there is nothing to do.
+		const hasCode = s.code !== 'free';
+		const present = s.views > 0 && hasCode;
+		const complete = present && !s.steps.length && s.code !== 'outdated';
+
+		if (!complete) {
+			run(s.code === 'outdated' ? 'Update' : present ? 'Repair' : 'Install',
+				(g, l) => this.install(g, l), true);
+		}
+		if (present) run('Remove', (g, l) => this.uninstall(g, l), false);
+		if (complete) {
+			const ok = el('div', box, 'Installed');
+			ok.style.cssText = 'font-size:12px;opacity:.6;align-self:center;';
+		}
+	}
 }
 
 /** Small DOM helper. textContent only — plugin code must never build markup. */

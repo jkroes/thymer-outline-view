@@ -1,6 +1,6 @@
 # Outline view
 
-An **Outline** view for [Thymer](https://thymer.com) collections: your records as an
+An outline view for [Thymer](https://thymer.com) collections: your records as an
 indented, collapsible tree instead of a flat list, with the look and keys of Thymer's
 own List view. It nests pages through Thymer's sub-pages ("Sub-page of"), which also
 keeps child pages out of their parent's Backlinks. Your records
@@ -12,66 +12,9 @@ breadcrumb of the page's ancestors above its title, and commands to show the
 page in the outline, add a child or sibling page, or move the page somewhere else. See
 [On every page](#on-every-page).
 
-## Install
-
-Outline comes in two parts. The **collection code** draws the view and goes into each
-collection that should have one. The **global plugin** is optional and adds the
-[page features](#on-every-page): the breadcrumb and the page commands.
-
-**In each collection:**
-
-1. In the collection's settings, turn on **sub-pages**.
-2. Add a **number** property named **Order**. It stores each page's position under its
-   parent, and changes through the outline's rearranging keys.
-3. Add a view of type **Custom** and sort it by Order.
-4. Open the collection's config JSON. Find the Order property's `id`, and set the Custom
-   view's `opts` to `{ "kind": "outline", "order_field_id": "<that id>" }`. Optionally set
-   `"read_only": true` on the Order property, so nobody types over a position by hand.
-5. Open **Edit Code → Custom Code**, paste the contents of
-   [`collection/dist/plugin.js`](collection/dist/plugin.js), and save.
-
-**Once per workspace, for the page features:** open the command palette (⌘P), choose
-**Plugins → Create Plugin**, name it **Outline**, and paste the contents of
-[`global/dist/plugin.js`](global/dist/plugin.js) into **Edit Code → Custom Code**.
-
-To update, paste the new `collection/dist/plugin.js` into each collection again.
-
-### Other code in the same collection
-
-Thymer gives each collection one piece of code, so a collection with an Outline view
-can't simply have a second plugin pasted in. To add a formula, a custom record title or
-another plugin's custom view to the same collection, merge it in when building, so
-updates don't wipe it:
-
-1. Clone this repo and run `./setup.sh`.
-2. Write your additions as a small module:
-
-   ```js
-   // my-extras.js
-   export default function (plugin) {
-   	plugin.properties.formula('Total', ({ record }) => record.number('Price') * 2);
-   }
-   ```
-
-   It runs when the collection loads, with the collection's plugin as its argument.
-3. Build with it and paste the result into the collection:
-   `node collection/build.mjs --extras my-extras.js --out my-collection.js`
-
-Every Custom view in the collection is drawn as an outline unless its `opts.kind` says
-otherwise. If your additions register a Custom view of their own, give that view a
-different `kind` in its `opts`.
-
-With the Thymer desktop app's MCP server on, `collection/deploy.mjs` does the build and
-the paste for you: it merges `local/extras/<Collection name>.js` if you have one and
-writes the result into the collection (`THYMER_WORKSPACE=<workspace guid> node
-collection/deploy.mjs "<Collection>"`, or `--all` to update every collection that
-already has the Outline code).
-
-Other devices pick the view up after a reload (⌘R).
-
 ## On every page
 
-On any page of a collection with an Outline view:
+These come from the global plugin. On any page of a collection with an Outline view:
 
 - **Breadcrumb.** The page's ancestors appear after the collection name above the
   title: the top-level page, then the last two. Levels in between fold into a **…**
@@ -164,13 +107,15 @@ the side panel, the peek borrows it and puts it back afterwards.
 
 ### New pages are named in place
 
-**⇧Enter**, or the **New …** card at the bottom, adds a row and puts the cursor in its
-name, rather than taking you to a new page. Leave the name empty and the page goes to
-the trash.
+**⇧Enter** adds a page just below the selected row, as its sibling, and puts the
+cursor in its name rather than taking you to a new page. **⌥Enter** does the same just
+above the row. The **New …** card at the bottom adds one at the top level. Leave the
+name empty and the page goes to the trash.
 
 ### Keys
 
-Most keys are the List view's own. The differences:
+The view's keys come from the collection code and work without the global plugin. Most
+are the List view's own. The differences:
 
 | Key | Action |
 |---|---|
@@ -191,7 +136,7 @@ on a hovered row.
 
 While the outline has focus, the status bar at the bottom of the window shows List's
 hints first, in its order and wording (search, peek, open, rename, open aside, create,
-trash), then the outline's own: edit, indent, outdent, reorder, zoom (and zoom out
+trash), then the outline's own: create above, edit, indent, outdent, reorder, zoom (and zoom out
 while zoomed), and last the folds: fold, fold children, fold descendants, fold level,
 fold all. Fold, zoom and trash hints show your own
 bindings, and an action with no key has no hint. During a peek it switches to the peek
@@ -204,17 +149,12 @@ press `?` to page to the hints that were cut off, and again to come back round t
 start. To use another key, add `"plugin.outlinehints": "<key>"` to your custom keyboard
 shortcuts (⌘P → Change Keyboard Shortcuts).
 
-A few List features have no counterpart, because Thymer doesn't let plugins do them
-yet: dragging rows, move mode (`M`), **Custom Order** sorting, and `⌥Enter` (new page
-above). The sort you pick resets when you leave the view, as it
-does for every custom view.
-
-## Turning it off
-
-Delete the Outline view in the collection's settings and clear the collection's code
-(or rebuild it with only your additions). Your records, sub-pages and Order values are
-untouched. Without an Outline view, the collection's pages lose the breadcrumb and
-commands too.
+**Why an Order property?** Thymer already has a manual order of its own: sort a view
+by **Custom Order** and rows stay where you drag them. But Thymer's plugin API gives a
+plugin no way to read or change that order, so the outline can't follow it. It keeps
+each page's position in the Order property instead, which is why the view is sorted by
+Order and why List's dragging and move mode (`M`) are replaced by the rearranging keys
+above.
 
 ## How it works (for the curious)
 
@@ -239,9 +179,92 @@ commands too.
    Thymer's, which are hidden only while the outline has focus.
 5. **It draws only what's on screen.** Rows outside the visible area aren't built until
    you scroll to them, so a collection with thousands of records stays quick.
-[`CLAUDE.md`](CLAUDE.md) has the full implementation notes, including the Thymer
-behavior this relies on that isn't in the plugin docs. Read it before changing the code.
 
-## License
+## Install
 
-MIT, see [LICENSE](LICENSE).
+Outline comes in two parts. The **collection code** draws the view and goes into each
+collection that should have one. It handles every key that works inside the view
+([Keys](#keys), fold and zoom, the `?` hint paging). The **global plugin** installs
+that code for you and adds the [page features](#on-every-page): the breadcrumb and the
+page commands, with their four `plugin.outline…` shortcut actions.
+
+**Global plugin:**
+
+1. Open the command palette (⌘P), choose **Plugins → Create Plugin**, name it
+   **Outline**, and paste the contents of
+   [`global/dist/plugin.js`](global/dist/plugin.js) into **Edit Code → Custom Code**.
+2. Open ⌘P → **Outline: install into a collection…**. A panel lists your collections,
+   each with a line saying where it stands and a button saying what it will do:
+
+| Button | What it does |
+|---|---|
+| Install | Turns on **sub-pages**, adds an **Order** property and an Outline view sorted by it, and writes the collection code. An existing number property named Order is reused. Order is made read-only, so it changes only through the outline's rearranging keys. |
+| Repair | Puts back whichever of those is missing: sub-pages, the Order property, the Outline view, or the code. |
+| Update | Replaces an older version of the collection code. |
+| Remove | Takes the Outline view and the collection code out again. Sub-pages and Order keep their values. |
+
+To update, paste the new `global/dist/plugin.js` into the global plugin, then press
+**Update** on each collection in the panel.
+
+**The installer never replaces code it didn't write.** A collection that already has
+code of its own (formulas, a custom record title) gets no button and nothing written;
+see [Other code in the same collection](#other-code-in-the-same-collection) to have
+both. Once the merged code is in place, the panel sets up the properties and the view
+there but leaves the code to you.
+
+**Collection plugin, by hand** (instead of the installer):
+
+1. In the collection's settings, turn on **sub-pages**.
+2. Add a **number** property named **Order**. It stores each page's position under its
+   parent, and changes through the outline's rearranging keys.
+3. Add a view of type **Custom** and sort it by Order.
+4. Open the collection's config JSON. Find the Order property's `id`, and set the Custom
+   view's `opts` to `{ "order_field_id": "<that id>" }`. Optionally set
+   `"read_only": true` on the Order property, so nobody types over a position by hand.
+5. Open **Edit Code → Custom Code**, paste the contents of
+   [`collection/dist/plugin.js`](collection/dist/plugin.js), and save. This replaces
+   any code the collection already has.
+
+### Other code in the same collection
+
+Thymer gives each collection one piece of code, so a collection with an Outline view
+can't simply have a second plugin pasted in. To add a formula, a custom record title or
+another plugin's custom view to the same collection, merge it in when building, so
+updates don't wipe it:
+
+1. Clone this repo and run `./setup.sh`.
+2. Write your additions as a small module:
+
+   ```js
+   // my-extras.js
+   export default function (plugin) {
+   	plugin.properties.formula('Total', ({ record }) => record.number('Price') * 2);
+   }
+   ```
+
+   It runs when the collection loads, with the collection's plugin as its argument.
+3. Build with it and paste the result into the collection:
+   `node collection/build.mjs --extras my-extras.js --out my-collection.js`
+
+The installer recognises a build made this way and never writes over it, so update such
+a collection by rebuilding and pasting again, not with the panel's Update button.
+
+Every Custom view in the collection is drawn as an outline unless its `opts.kind` says
+otherwise. If your additions register a Custom view of their own, give that view a
+different `kind` in its `opts`.
+
+With the Thymer desktop app's MCP server on, `collection/deploy.mjs` does the build and
+the paste for you: it merges `local/extras/<Collection name>.js` if you have one and
+writes the result into the collection (`THYMER_WORKSPACE=<workspace guid> node
+collection/deploy.mjs "<Collection>"`, or `--all` to update every collection that
+already has the Outline code).
+
+Other devices pick the view up after a reload (⌘R).
+
+## Turning it off
+
+Press **Remove** on the collection in the installer panel. By hand: delete the Outline
+view in the collection's settings and clear the collection's code (or rebuild it with
+only your additions). Your records, sub-pages and Order values are
+untouched. Without an Outline view, the collection's pages lose the breadcrumb and
+commands too.

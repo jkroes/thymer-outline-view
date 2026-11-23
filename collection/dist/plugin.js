@@ -365,6 +365,7 @@ var plugins = (() => {
       ["R", "Rename", mono],
       [`${cmd}\u21B5`, "Open Aside", mono],
       [`${shift}\u21B5`, `Create ${itemName}`, mono],
+      [IS_MAC ? "\u2325\u21B5" : "Alt+\u21B5", "Create Above", mono],
       hint("collection.trash_record", mono),
       ["E", "Edit", mono],
       ["\u21E5", "Indent", mono],
@@ -521,6 +522,7 @@ var plugins = (() => {
     let peekedGuid = null;
     let propMode = null;
     let pendingNameEditGuid = null;
+    let placingGuid = null;
     let win = { start: 0, end: 0 };
     const heightCache = /* @__PURE__ */ new Map();
     let rowEstimate = 30;
@@ -1216,6 +1218,54 @@ var plugins = (() => {
       follow(node.id);
       renderRows();
     }, "rearrange");
+    const createBeside = /* @__PURE__ */ __name(async (where) => {
+      const current = rows[selectedIndex];
+      if (!current || !hierarchy || placingGuid) return;
+      const node = current.node;
+      const refuse = /* @__PURE__ */ __name((title, message) => {
+        if (where === "below") createRecord();
+        else if (title) toast(title, message);
+      }, "refuse");
+      if (contextGuids.size || searchOpen) {
+        refuse("Clear the search to create above", "With a search or filter on, the outline shows only part of each level.");
+        return;
+      }
+      if (node.id === zoomGuid) {
+        refuse();
+        return;
+      }
+      const parent = parentOf(node);
+      const siblings = childList(parent);
+      const ord = orderField();
+      if (!ord) {
+        refuse("No Order property", `Run "Outline: install into a collection\u2026" to add one; a new page's place is stored there.`);
+        return;
+      }
+      if (!followsOrder(siblings, ord)) {
+        refuse(`Sort by ${ord.label} to create above`, `The rows aren't in ${ord.label} order, so the new page's place wouldn't show.`);
+        return;
+      }
+      const guid = viewContext.createRecord();
+      if (!guid) return;
+      placingGuid = guid;
+      let record = null;
+      for (let i = 0; i < 30 && !record; i++) {
+        record = (await plugin.collection.getAllRecords()).find((r) => r.guid === guid);
+        if (!record) await new Promise((r) => setTimeout(r, 100));
+      }
+      placingGuid = null;
+      if (!record) {
+        rebuild();
+        return;
+      }
+      if (parent && writeParent({ record }, parent)) notePending(guid, "parent", parent.id);
+      positionWrites({ id: guid, record }, siblings, siblings.indexOf(node) + (where === "below" ? 1 : 0), ord).forEach(({ node: n, value }) => {
+        n.record.prop(ord.id).set(value);
+        notePending(n.id, "order", value);
+      });
+      pendingNameEditGuid = guid;
+      follow(guid);
+    }, "createBeside");
     const editText = /* @__PURE__ */ __name(($cell, value, { onCommit, onCancel }) => {
       const $input = document.createElement("input");
       $input.type = "text";
@@ -2135,6 +2185,7 @@ var plugins = (() => {
         lastRecords = records;
         takeZoomHandoff();
         if (pending.size && !settled(records)) return;
+        if (placingGuid && records.some((r) => r.guid === placingGuid)) return;
         rebuild();
       }, "onRefresh"),
       // Width decides which rows stack onto two lines, so every measured
@@ -2217,7 +2268,12 @@ var plugins = (() => {
         }
         if (e.key === "Enter" && e.shiftKey) {
           e.preventDefault();
-          createRecord();
+          createBeside("below");
+          return;
+        }
+        if (e.key === "Enter" && e.altKey && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          createBeside("above");
           return;
         }
         if (e.key === "/" && plain) {

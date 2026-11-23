@@ -19,3 +19,4 @@ collection/dist/*
 # browser-automation output / OS
 .playwright-mcp/
 .DS_Store
+CLAUDE.md
