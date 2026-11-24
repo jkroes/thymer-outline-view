@@ -26,17 +26,24 @@ The view reuses Thymer's fold and zoom shortcuts for the editor, on the keys you
 | Default (macOS) | Action | Action name |
 |---|---|---|
 | `⌘/` | Fold or unfold the selected row. | `nav.toggleFold` |
-| `⌘,`, `⌘.`, none | Fold or unfold each of the row's children. | `nav.foldChildren`, `nav.unfoldChildren`, `nav.toggleFoldChildren` |
-| none, none, `⌘⇧?` | Fold or unfold everything under the row. On a Mac, Thymer's default for `nav.toggleFoldDescendants` (`⌘⇧?`) never fires, here or in the editor. To enable the default, bind it to `"Meta+Shift+/"`. | `nav.foldDescendants`, `nav.unfoldDescendants`, `nav.toggleFoldDescendants` |
-| none | Fold or unfold the whole tree, or the zoomed branch. | `nav.foldContainer`, `nav.unfoldContainer`, `nav.toggleFoldContainer` |
+| `⌘,` | Fold each of the row's children. The row itself stays open. | `nav.foldChildren` |
+| `⌘.` | Unfold each of the row's children. | `nav.unfoldChildren` |
+| | Fold the row's children if any of them is open, otherwise unfold them. | `nav.toggleFoldChildren` |
+| | Fold every page under the row, at every level. | `nav.foldDescendants` |
+| | Unfold every page under the row, at every level. | `nav.unfoldDescendants` |
+| `⌘⇧?` | Fold every page under the row if any of them is open, otherwise unfold them all. On a Mac, Thymer's default (`⌘⇧?`) never fires, here or in the editor. To enable the default, bind it to `"Meta+Shift+/"`. | `nav.toggleFoldDescendants` |
+| | Fold the whole tree, or the zoomed branch. | `nav.foldContainer` |
+| | Unfold the whole tree, or the zoomed branch. | `nav.unfoldContainer` |
+| | Fold the whole tree, or the zoomed branch, if any of it is open, otherwise unfold it all. | `nav.toggleFoldContainer` |
 | `⌘⇧,` | Fold the deepest open level under the row. On a row with nothing open, fold its parent and move there. | `nav.foldCascade` |
 | `⌘⇧.` | Unfold one more level under the row. | `nav.unfoldCascade` |
 
-The plugin provides one fold command that has no analog in Thymer's editor:
+The plugin adds two fold keys that have no analog in Thymer's editor:
 
 | Key | Action |
 |---|---|
-| `⌘↑` `⌘↓` | Fold or unfold the selected row. With nothing to fold, `⌘↑` folds the parent and moves there; `⌘↓` always moves down a row, unfolding first so it lands on the first child. |
+| `⌘↑` | Fold the selected row. On a row that is already folded or has no children, fold its parent and move there. |
+| `⌘↓` | Unfold the selected row and move down a row, landing on its first child. On a row that is already open or has no children, just move down. |
 
 ### Zoom
 

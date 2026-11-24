@@ -20,3 +20,6 @@ collection/dist/*
 .playwright-mcp/
 .DS_Store
 CLAUDE.md
+
+# source of the README video (uploaded to GitHub as an attachment)
+docs/demo.mp4
