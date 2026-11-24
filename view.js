@@ -422,6 +422,8 @@ function kbdHtml(text) {
 
 /** Set on <body> while an Outline view has focus; swaps in the view's key hints. */
 const KEYS_BODY_CLASS = 'plg-outline-keys';
+/** Set on the strip of the plugin whose view has focus; the other collections' strips stay hidden. */
+const KEYS_ON_CLASS = 'is-on';
 
 /**
  * The status-bar hints shown while an Outline view has focus, in the app's own
@@ -498,7 +500,8 @@ function hintsHtml(hints) {
 
 /**
  * The Outline key-hint strip in the status bar. One per collection plugin,
- * shared by that collection's Outline views; only the focused view drives it.
+ * shared by that collection's Outline views; only the focused view drives it,
+ * and only the focused view's plugin shows its strip.
  */
 export class KeyHints {
 
@@ -507,10 +510,21 @@ export class KeyHints {
 	}
 
 	dispose() {
-		document.body.classList.remove(KEYS_BODY_CLASS);
 		if (this.keysObserver) this.keysObserver.disconnect();
 		if (this.keysItem) this.keysItem.remove();
 		this.keysItem = this.keysObserver = null;
+		this.markShown(false);
+	}
+
+	/**
+	 * Every collection with an Outline has its own strip, all in the one status
+	 * bar, so each strip shows only while its own view has focus (KEYS_ON_CLASS)
+	 * and the app's hints stay hidden while any strip is showing.
+	 */
+	markShown(on) {
+		const $el = this.keysItem && this.keysItem.getElement();
+		if ($el) $el.classList.toggle(KEYS_ON_CLASS, on);
+		document.body.classList.toggle(KEYS_BODY_CLASS, !!document.querySelector(`.outline-keys.${KEYS_ON_CLASS}`));
 	}
 
 	/**
@@ -526,8 +540,8 @@ export class KeyHints {
 			this.keysMap = map;
 			this.keysEpoch = (this.keysEpoch || 0) + 1;
 		}
-		document.body.classList.toggle(KEYS_BODY_CLASS, on);
 		if (!on) {
+			this.markShown(false);
 			this.keysStart = 0;
 			return;
 		}
@@ -554,6 +568,7 @@ export class KeyHints {
 				}
 			}
 		}
+		this.markShown(true);
 		if (this.keysState !== state) {
 			this.keysState = state;
 			this.keysHints = keyHints(mode, zoomed, itemName);
@@ -2587,7 +2602,7 @@ export function createOutlineView(viewContext, host, hints) {
 				.outline-keys { display: none !important; }
 				body.${KEYS_BODY_CLASS} .statusbar--status-bar { position: relative; }
 				body.${KEYS_BODY_CLASS} .statusbar--left > * { display: none !important; }
-				body.${KEYS_BODY_CLASS} .outline-keys {
+				body.${KEYS_BODY_CLASS} .outline-keys.${KEYS_ON_CLASS} {
 					display: flex !important;
 					position: absolute;
 					left: 0;

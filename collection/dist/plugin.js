@@ -360,6 +360,7 @@ var plugins = (() => {
   }
   __name(kbdHtml, "kbdHtml");
   var KEYS_BODY_CLASS = "plg-outline-keys";
+  var KEYS_ON_CLASS = "is-on";
   function keyHints(mode, zoomed, itemName) {
     const cmd = IS_MAC ? "\u2318" : "Ctrl+";
     const shift = IS_MAC ? "\u21E7" : "Shift+";
@@ -422,10 +423,20 @@ var plugins = (() => {
       this.ui = ui;
     }
     dispose() {
-      document.body.classList.remove(KEYS_BODY_CLASS);
       if (this.keysObserver) this.keysObserver.disconnect();
       if (this.keysItem) this.keysItem.remove();
       this.keysItem = this.keysObserver = null;
+      this.markShown(false);
+    }
+    /**
+     * Every collection with an Outline has its own strip, all in the one status
+     * bar, so each strip shows only while its own view has focus (KEYS_ON_CLASS)
+     * and the app's hints stay hidden while any strip is showing.
+     */
+    markShown(on) {
+      const $el = this.keysItem && this.keysItem.getElement();
+      if ($el) $el.classList.toggle(KEYS_ON_CLASS, on);
+      document.body.classList.toggle(KEYS_BODY_CLASS, !!document.querySelector(`.outline-keys.${KEYS_ON_CLASS}`));
     }
     /**
      * Show or hide the Outline key hints. A plugin can only APPEND status-bar
@@ -439,8 +450,8 @@ var plugins = (() => {
         this.keysMap = map;
         this.keysEpoch = (this.keysEpoch || 0) + 1;
       }
-      document.body.classList.toggle(KEYS_BODY_CLASS, on);
       if (!on) {
+        this.markShown(false);
         this.keysStart = 0;
         return;
       }
@@ -463,6 +474,7 @@ var plugins = (() => {
           }
         }
       }
+      this.markShown(true);
       if (this.keysState !== state) {
         this.keysState = state;
         this.keysHints = keyHints(mode, zoomed, itemName);
@@ -1931,7 +1943,7 @@ var plugins = (() => {
 				.outline-keys { display: none !important; }
 				body.${KEYS_BODY_CLASS} .statusbar--status-bar { position: relative; }
 				body.${KEYS_BODY_CLASS} .statusbar--left > * { display: none !important; }
-				body.${KEYS_BODY_CLASS} .outline-keys {
+				body.${KEYS_BODY_CLASS} .outline-keys.${KEYS_ON_CLASS} {
 					display: flex !important;
 					position: absolute;
 					left: 0;
