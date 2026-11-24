@@ -382,25 +382,30 @@ var plugins = (() => {
       ["\u21B5", "Save", mono],
       ["Esc", "Exit", mono]
     ] : [
+      // Find and open
       ["/", "Search", mono],
-      ["Space", "Peek", mono],
       ["\u21B5", "Open", mono],
-      ["R", "Rename", mono],
       [`${cmd}\u21B5`, "Open Aside", mono],
-      [`${shift}\u21B5`, `Create ${itemName}`, mono],
-      [IS_MAC ? "\u2325\u21B5" : "Alt+\u21B5", "Create Above", mono],
-      hint("collection.trash_record", mono),
-      ["E", "Edit", mono],
-      ["\u21E5", "Indent", mono],
-      [`${shift}\u21E5`, "Outdent", mono],
-      [`${cmd}${shift}\u2191\u2193`, "Reorder", mono],
-      hint("panel.zoom_in"),
-      ...zoomed ? [hint("panel.zoom_out")] : [],
+      ["Space", "Peek", mono],
+      // Fold, narrowest to widest
       hint("nav.togglefold"),
       hint("nav.togglefoldchildren"),
       hint("nav.togglefolddescendants"),
       [cascade, "Fold level"],
-      hint("nav.togglefoldcontainer")
+      hint("nav.togglefoldcontainer"),
+      // Zoom
+      hint("panel.zoom_in"),
+      ...zoomed ? [hint("panel.zoom_out")] : [],
+      // Create and edit
+      [`${shift}\u21B5`, `Create ${itemName}`, mono],
+      [IS_MAC ? "\u2325\u21B5" : "Alt+\u21B5", "Create Above", mono],
+      ["R", "Rename", mono],
+      ["E", "Edit", mono],
+      // Rearrange
+      ["\u21E5", "Indent", mono],
+      [`${shift}\u21E5`, "Outdent", mono],
+      [`${cmd}${shift}\u2191\u2193`, "Reorder", mono],
+      hint("collection.trash_record", mono)
     ];
     return hints.filter(([k]) => k);
   }

@@ -448,7 +448,8 @@ function keyHints(mode, zoomed, itemName) {
 	// While peeking, the set the app's own views show then (getPeekStatusBarContext).
 	// In property mode and while a field is being edited, native List's sets for
 	// the same states (its inPropertyMode / editingCardFieldId branches).
-	// Otherwise native List's set first, in its order and wording, then ours.
+	// Otherwise grouped by what the keys do (user's request 2026-11-24; it was
+	// native List's set in its order, then ours), in native List's wording.
 	const hints = mode === 'peek' ? [
 		['Esc', 'Exit Peek', mono],
 		['↵', 'Open', mono],
@@ -461,25 +462,30 @@ function keyHints(mode, zoomed, itemName) {
 		['↵', 'Save', mono],
 		['Esc', 'Exit', mono],
 	] : [
+		// Find and open
 		['/', 'Search', mono],
-		['Space', 'Peek', mono],
 		['↵', 'Open', mono],
-		['R', 'Rename', mono],
 		[`${cmd}↵`, 'Open Aside', mono],
-		[`${shift}↵`, `Create ${itemName}`, mono],
-		[IS_MAC ? '⌥↵' : 'Alt+↵', 'Create Above', mono],
-		hint('collection.trash_record', mono),
-		['E', 'Edit', mono],
-		['⇥', 'Indent', mono],
-		[`${shift}⇥`, 'Outdent', mono],
-		[`${cmd}${shift}↑↓`, 'Reorder', mono],
-		hint('panel.zoom_in'),
-		...(zoomed ? [hint('panel.zoom_out')] : []),
+		['Space', 'Peek', mono],
+		// Fold, narrowest to widest
 		hint('nav.togglefold'),
 		hint('nav.togglefoldchildren'),
 		hint('nav.togglefolddescendants'),
 		[cascade, 'Fold level'],
 		hint('nav.togglefoldcontainer'),
+		// Zoom
+		hint('panel.zoom_in'),
+		...(zoomed ? [hint('panel.zoom_out')] : []),
+		// Create and edit
+		[`${shift}↵`, `Create ${itemName}`, mono],
+		[IS_MAC ? '⌥↵' : 'Alt+↵', 'Create Above', mono],
+		['R', 'Rename', mono],
+		['E', 'Edit', mono],
+		// Rearrange
+		['⇥', 'Indent', mono],
+		[`${shift}⇥`, 'Outdent', mono],
+		[`${cmd}${shift}↑↓`, 'Reorder', mono],
+		hint('collection.trash_record', mono),
 	];
 	// An action with no key has no hint.
 	return hints.filter(([k]) => k);
