@@ -367,7 +367,9 @@ function keyLabel(key) {
 	// A character only typed with Shift already says so: "Shift+?" shows as "?".
 	if (SHIFTED_CHARS.has(last)) parts = parts.filter(m => m !== 'Shift');
 	const k = KEY_GLYPHS[last] || last;
-	if (!IS_MAC) return [...parts.map(m => m === 'Meta' ? 'Ctrl' : m), k].join('+');
+	// Off a Mac, Meta is the Windows key. (The app's own label function prints it
+	// as "Ctrl" there, which makes a custom "Meta+/" read as the Ctrl+/ it isn't.)
+	if (!IS_MAC) return [...parts.map(m => m === 'Meta' ? 'Win' : m), k].join('+');
 	const glyph = { Meta: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' };
 	return parts.map(m => glyph[m]).join('') + k;
 }

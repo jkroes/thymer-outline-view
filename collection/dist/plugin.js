@@ -329,7 +329,7 @@ var plugins = (() => {
     const last = parts.pop();
     if (SHIFTED_CHARS.has(last)) parts = parts.filter((m) => m !== "Shift");
     const k = KEY_GLYPHS[last] || last;
-    if (!IS_MAC) return [...parts.map((m) => m === "Meta" ? "Ctrl" : m), k].join("+");
+    if (!IS_MAC) return [...parts.map((m) => m === "Meta" ? "Win" : m), k].join("+");
     const glyph = { Meta: "\u2318", Ctrl: "\u2303", Alt: "\u2325", Shift: "\u21E7" };
     return parts.map((m) => glyph[m]).join("") + k;
   }
