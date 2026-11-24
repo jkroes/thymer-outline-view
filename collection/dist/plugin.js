@@ -43,6 +43,9 @@ var plugins = (() => {
     "zinc",
     "yellow"
   ];
+  var MODIFIED = "updated_at";
+  var CREATED = "created_at";
+  var DATE_FORMAT = new Intl.DateTimeFormat(void 0, { year: "numeric", month: "short", day: "numeric" });
   function timeAgo(date) {
     if (!date) return "";
     const seconds = Math.floor((Date.now() - date.getTime()) / 1e3);
@@ -533,6 +536,7 @@ var plugins = (() => {
     let scrollers = null;
     let scrollRaf = 0;
     let renderFields = [];
+    let renderStamp = false;
     const fieldsById = /* @__PURE__ */ __name(() => {
       const map = {};
       (plugin.getConfiguration().fields || []).forEach((f) => {
@@ -544,8 +548,9 @@ var plugins = (() => {
     const isExpanded = /* @__PURE__ */ __name((node) => node.id === zoomGuid || (searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id)), "isExpanded");
     const visibleFields = /* @__PURE__ */ __name(() => {
       const byId = fieldsById();
-      return viewContext.getVisiblePropertyIds().map((id) => byId[id]).filter((field) => field && field.id !== "title" && field.type !== "datetime" && field.type !== "banner");
+      return viewContext.getVisiblePropertyIds().map((id) => byId[id]).filter((field) => field && field.id !== "title" && field.id !== MODIFIED && field.type !== "banner");
     }, "visibleFields");
+    const showsStamp = /* @__PURE__ */ __name(() => viewContext.getVisiblePropertyIds().includes(MODIFIED), "showsStamp");
     const propValue = /* @__PURE__ */ __name((record, field) => {
       if (field.type === "choice") {
         const label = record.prop(field.id).choiceLabel();
@@ -560,6 +565,11 @@ var plugins = (() => {
       if (field.type === "number") {
         const num = record.number(field.id);
         return num === null ? null : { text: String(num) };
+      }
+      if (field.type === "datetime") {
+        const date = record.date(field.id);
+        if (!date) return null;
+        return { text: field.id === CREATED ? timeAgo(date) : DATE_FORMAT.format(date) };
       }
       const text = record.text(field.id);
       return text ? { text } : null;
@@ -756,7 +766,7 @@ var plugins = (() => {
         const $props = $r.querySelector(".outline-props");
         const $title = $r.querySelector(".outline-title");
         if ($props && $title && $props.parentElement !== $title) {
-          $title.insertBefore($props, $r.querySelector(".outline-time"));
+          $title.insertBefore($props, $r.querySelector(".outline-time, .outline-row-menu"));
         }
         $r.classList.remove("is-stacked");
       });
@@ -1611,6 +1621,7 @@ var plugins = (() => {
       }
       renderHeld = false;
       renderFields = visibleFields();
+      renderStamp = showsStamp();
       const heldScroll = (scrollers || []).map((el) => [el, el.scrollTop]);
       $list.innerHTML = "";
       $topPad = $bottomPad = null;
@@ -1705,10 +1716,12 @@ var plugins = (() => {
         chips.forEach(({ field, value }) => $props.appendChild(propChip(field, value)));
         $title.appendChild($props);
       }
-      const $time = document.createElement("span");
-      $time.className = "outline-time";
-      $time.textContent = timeAgo(node.record.date("Modified"));
-      $title.appendChild($time);
+      if (renderStamp) {
+        const $time = document.createElement("span");
+        $time.className = "outline-time";
+        $time.textContent = timeAgo(node.record.date(MODIFIED));
+        $title.appendChild($time);
+      }
       if (canShowOptions) {
         const $opts = document.createElement("button");
         $opts.type = "button";

@@ -19,6 +19,13 @@ const ENUM_COLORS = [
 	'rose', 'stone', 'teal', 'sky', 'indigo', 'zinc', 'yellow'
 ];
 
+/** The system time properties' field ids, the same in every collection. */
+const MODIFIED = 'updated_at';
+const CREATED = 'created_at';
+
+/** A date property's chip: "Nov 23, 2026" in the reader's locale. */
+const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+
 /** "9m ago" / "2h ago" / "3d ago", matching the native list view's stamp. */
 function timeAgo(date) {
 	if (!date) return '';
@@ -674,6 +681,8 @@ export function createOutlineView(viewContext, host, hints) {
 	let scrollRaf = 0;
 	/** visibleFields() for the current render, so window re-renders don't re-read config */
 	let renderFields = [];
+	/** showsStamp() for the current render */
+	let renderStamp = false;
 
 	// --- collection / view config -------------------------------------
 
@@ -702,16 +711,23 @@ export function createOutlineView(viewContext, host, hints) {
 	const isExpanded = (node) => node.id === zoomGuid
 		|| (searchOpen ? searchOpen.has(node.id) : !collapsed.has(node.id));
 
-	/** Properties the view is configured to show, minus what the row renders itself. */
+	/**
+	 * Properties the view is configured to show, minus what the row renders
+	 * itself: the title, and Modified, which is the stamp at the row's end
+	 * rather than a chip (see showsStamp).
+	 */
 	const visibleFields = () => {
 		const byId = fieldsById();
 		return viewContext.getVisiblePropertyIds()
 			.map(id => byId[id])
 			.filter(field => field
 				&& field.id !== 'title'
-				&& field.type !== 'datetime'
+				&& field.id !== MODIFIED
 				&& field.type !== 'banner');
 	};
+
+	/** The "3d ago" stamp is drawn only when the view shows the Modified property. */
+	const showsStamp = () => viewContext.getVisiblePropertyIds().includes(MODIFIED);
 
 	/** Display value for one property, or null when empty. */
 	const propValue = (record, field) => {
@@ -729,6 +745,13 @@ export function createOutlineView(viewContext, host, hints) {
 		if (field.type === 'number') {
 			const num = record.number(field.id);
 			return num === null ? null : { text: String(num) };
+		}
+		if (field.type === 'datetime') {
+			const date = record.date(field.id);
+			if (!date) return null;
+			// Created reads like the Modified stamp; a date of the user's own
+			// (a deadline, say) may lie ahead, so it is written out.
+			return { text: field.id === CREATED ? timeAgo(date) : DATE_FORMAT.format(date) };
 		}
 		const text = record.text(field.id);
 		return text ? { text } : null;
@@ -1013,7 +1036,8 @@ export function createOutlineView(viewContext, host, hints) {
 			const $props = $r.querySelector('.outline-props');
 			const $title = $r.querySelector('.outline-title');
 			if ($props && $title && $props.parentElement !== $title) {
-				$title.insertBefore($props, $r.querySelector('.outline-time'));
+				// Back before whatever ends the line: the stamp, else the ⋯ button.
+				$title.insertBefore($props, $r.querySelector('.outline-time, .outline-row-menu'));
 			}
 			$r.classList.remove('is-stacked');
 		});
@@ -2166,6 +2190,7 @@ export function createOutlineView(viewContext, host, hints) {
 		if ($inlineInput && $inlineInput.isConnected) { renderHeld = true; return; }
 		renderHeld = false;
 		renderFields = visibleFields();
+		renderStamp = showsStamp();
 		// Emptying the list lets the panel's scroll position collapse to the
 		// top; hold it, so a redraw (a fold, a refresh) leaves the view where
 		// it was and only setSelection() below scrolls, if the row needs it.
@@ -2299,10 +2324,12 @@ export function createOutlineView(viewContext, host, hints) {
 			$title.appendChild($props);
 		}
 
-		const $time = document.createElement('span');
-		$time.className = 'outline-time';
-		$time.textContent = timeAgo(node.record.date('Modified'));
-		$title.appendChild($time);
+		if (renderStamp) {
+			const $time = document.createElement('span');
+			$time.className = 'outline-time';
+			$time.textContent = timeAgo(node.record.date(MODIFIED));
+			$title.appendChild($time);
+		}
 
 		// The native list card's "⋯" Options button: hidden until the row is
 		// hovered or selected in a focused view, and it opens the app's own
