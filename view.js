@@ -357,21 +357,56 @@ const KEY_GLYPHS = {
 	ArrowDown: '↓', PageUp: 'PgUp', PageDown: 'PgDn', Delete: 'Del', Backspace: IS_MAC ? '⌫' : 'Bksp',
 };
 
-const SHIFTED_CHARS = new Set([...Object.values(SHIFTED_CODE_KEYS), ...')!@#$%^&*(']);
+/** Shifted character → the key it is typed on (US layout): "?" → "/", "!" → "1". */
+const UNSHIFTED = Object.fromEntries([
+	...Object.keys(SHIFTED_CODE_KEYS).map(code => [SHIFTED_CODE_KEYS[code], CODE_KEYS[code]]),
+	...Array.from(')!@#$%^&*(', (c, digit) => [c, String(digit)]),
+]);
 
-/** A key as the status bar shows it, as plain text: "Meta+Shift+," → "⌘⇧," on a Mac. */
+/** Keys Shift turns into another character, which the app then names instead. */
+const SHIFTABLE = new Set(Object.values(UNSHIFTED).filter(k => k !== '[' && k !== ']'));
+
+/** The reverse: a key → the character Shift makes of it. */
+const SHIFTED = Object.fromEntries(Object.entries(UNSHIFTED).map(([shifted, plain]) => [plain, shifted]));
+
+/**
+ * A binding as the hints show it: its modifiers and its key, with Shift folded
+ * into the character wherever there is a shifted one (user's choice
+ * 2026-11-24): "Ctrl+Shift+?" → Ctrl, "?"; "Meta+Shift+/" → Meta, "?". Letters
+ * keep their Shift. Null for no key, or one that can't fire.
+ */
+function shownKey(key) {
+	if (!key) return null;
+	let mods = key.split('+');
+	let last = mods.pop();
+	// A binding has to be written with the shifted character wherever Shift
+	// changes what the key types, which is everywhere but with ⌘ on a Mac, where
+	// the key arrives unshifted. One spelled the other way never fires
+	// ("Meta+Shift+?" on a Mac, "Ctrl+Shift+/" on Windows): it gets no hint.
+	// ([ and ] are named by physical key either way.)
+	const unshiftedArrives = IS_MAC && mods.includes('Meta');
+	if (unshiftedArrives ? last in UNSHIFTED : SHIFTABLE.has(last) && mods.includes('Shift')) return null;
+	if (mods.includes('Shift') && (last in UNSHIFTED || last in SHIFTED)) {
+		last = SHIFTED[last] ?? last;
+		mods = mods.filter(m => m !== 'Shift');
+	}
+	return { mods, k: KEY_GLYPHS[last] || last };
+}
+
+/** A key as the status bar shows it, as plain text: "Meta+Shift+," → "⌘<" on a Mac. '' for no key, or one that can't fire. */
 function keyLabel(key) {
-	if (!key) return '';
-	let parts = key.split('+');
-	const last = parts.pop();
-	// A character only typed with Shift already says so: "Shift+?" shows as "?".
-	if (SHIFTED_CHARS.has(last)) parts = parts.filter(m => m !== 'Shift');
-	const k = KEY_GLYPHS[last] || last;
+	const shown = shownKey(key);
+	if (!shown) return '';
 	// Off a Mac, Meta is the Windows key. (The app's own label function prints it
 	// as "Ctrl" there, which makes a custom "Meta+/" read as the Ctrl+/ it isn't.)
-	if (!IS_MAC) return [...parts.map(m => m === 'Meta' ? 'Win' : m), k].join('+');
+	if (!IS_MAC) return [...shown.mods.map(m => m === 'Meta' ? 'Win' : m), shown.k].join('+');
 	const glyph = { Meta: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' };
-	return parts.map(m => glyph[m]).join('') + k;
+	return shown.mods.map(m => glyph[m]).join('') + shown.k;
+}
+
+/** A binding's key alone, as keyLabel() shows it: "Ctrl+Shift+<" → "<". */
+function bareKeyLabel(key) {
+	return shownKey(key)?.k || '';
 }
 
 /** The glyphs the app sets as `kbdmod` (its `HY` set). */
@@ -398,10 +433,11 @@ function keyHints(mode, zoomed, itemName) {
 	const shift = IS_MAC ? '⇧' : 'Shift+';
 	const { keys } = foldKeymap();
 	// Fold level: unfold then fold, the shared modifiers written once ("⌘⇧.,").
-	const up = keys['nav.unfoldcascade'], down = keys['nav.foldcascade'];
+	const live = k => (keyLabel(k) ? k : '');
+	const up = live(keys['nav.unfoldcascade']), down = live(keys['nav.foldcascade']);
 	const modsOf = k => k.split('+').slice(0, -1).join('+');
 	const cascade = up && down && modsOf(up) === modsOf(down)
-		? keyLabel(up) + keyLabel(down.split('+').pop())
+		? keyLabel(up) + bareKeyLabel(down)
 		: [up, down].filter(Boolean).map(keyLabel).join(' ');
 	// statusbar--kbd-modifier on an item sets its key in the mono font
 	// (`.statusbar--kbd-modifier .statusbar--kbd`). Native List gives it to every

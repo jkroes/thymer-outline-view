@@ -322,18 +322,37 @@ var plugins = (() => {
     Delete: "Del",
     Backspace: IS_MAC ? "\u232B" : "Bksp"
   };
-  var SHIFTED_CHARS = /* @__PURE__ */ new Set([...Object.values(SHIFTED_CODE_KEYS), ...")!@#$%^&*("]);
+  var UNSHIFTED = Object.fromEntries([
+    ...Object.keys(SHIFTED_CODE_KEYS).map((code) => [SHIFTED_CODE_KEYS[code], CODE_KEYS[code]]),
+    ...Array.from(")!@#$%^&*(", (c, digit) => [c, String(digit)])
+  ]);
+  var SHIFTABLE = new Set(Object.values(UNSHIFTED).filter((k) => k !== "[" && k !== "]"));
+  var SHIFTED = Object.fromEntries(Object.entries(UNSHIFTED).map(([shifted, plain]) => [plain, shifted]));
+  function shownKey(key) {
+    if (!key) return null;
+    let mods = key.split("+");
+    let last = mods.pop();
+    const unshiftedArrives = IS_MAC && mods.includes("Meta");
+    if (unshiftedArrives ? last in UNSHIFTED : SHIFTABLE.has(last) && mods.includes("Shift")) return null;
+    if (mods.includes("Shift") && (last in UNSHIFTED || last in SHIFTED)) {
+      last = SHIFTED[last] ?? last;
+      mods = mods.filter((m) => m !== "Shift");
+    }
+    return { mods, k: KEY_GLYPHS[last] || last };
+  }
+  __name(shownKey, "shownKey");
   function keyLabel(key) {
-    if (!key) return "";
-    let parts = key.split("+");
-    const last = parts.pop();
-    if (SHIFTED_CHARS.has(last)) parts = parts.filter((m) => m !== "Shift");
-    const k = KEY_GLYPHS[last] || last;
-    if (!IS_MAC) return [...parts.map((m) => m === "Meta" ? "Win" : m), k].join("+");
+    const shown = shownKey(key);
+    if (!shown) return "";
+    if (!IS_MAC) return [...shown.mods.map((m) => m === "Meta" ? "Win" : m), shown.k].join("+");
     const glyph = { Meta: "\u2318", Ctrl: "\u2303", Alt: "\u2325", Shift: "\u21E7" };
-    return parts.map((m) => glyph[m]).join("") + k;
+    return shown.mods.map((m) => glyph[m]).join("") + shown.k;
   }
   __name(keyLabel, "keyLabel");
+  function bareKeyLabel(key) {
+    return shownKey(key)?.k || "";
+  }
+  __name(bareKeyLabel, "bareKeyLabel");
   var KBDMOD_GLYPHS = /* @__PURE__ */ new Set(["\u232B", "\u2326", "\u21B5", "\u21E7", "\u2303", "\u2325", "\u2318", "\u2192", "\u2190", "\u2191", "\u2193", "\u2195", "\u2194", "\u21E5"]);
   function kbdHtml(text) {
     const esc = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -345,9 +364,10 @@ var plugins = (() => {
     const cmd = IS_MAC ? "\u2318" : "Ctrl+";
     const shift = IS_MAC ? "\u21E7" : "Shift+";
     const { keys } = foldKeymap();
-    const up = keys["nav.unfoldcascade"], down = keys["nav.foldcascade"];
+    const live = /* @__PURE__ */ __name((k) => keyLabel(k) ? k : "", "live");
+    const up = live(keys["nav.unfoldcascade"]), down = live(keys["nav.foldcascade"]);
     const modsOf = /* @__PURE__ */ __name((k) => k.split("+").slice(0, -1).join("+"), "modsOf");
-    const cascade = up && down && modsOf(up) === modsOf(down) ? keyLabel(up) + keyLabel(down.split("+").pop()) : [up, down].filter(Boolean).map(keyLabel).join(" ");
+    const cascade = up && down && modsOf(up) === modsOf(down) ? keyLabel(up) + bareKeyLabel(down) : [up, down].filter(Boolean).map(keyLabel).join(" ");
     const mono = "statusbar--kbd-modifier";
     const hint = /* @__PURE__ */ __name((action, cls) => [keyLabel(keys[action]), ACTIONS[action].hint, cls], "hint");
     const hints = mode === "peek" ? [

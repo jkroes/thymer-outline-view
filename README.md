@@ -21,7 +21,7 @@ Pages are nested based on sub-pages (the **Sub-page of** property) with a fold t
 
 ### Fold
 
-The view reuses Thymer's fold and zoom shortcuts for the editor, on the keys you've bound in ⌘P → Change Keyboard Shortcuts or Thymer's defaults. Folds are remembered on each device.
+The view reuses Thymer's fold and zoom shortcuts for the editor, on the keys you've bound in ⌘P → Change Keyboard Shortcuts or Thymer's defaults (see [Binding your own keys](#binding-your-own-keys)). Folds are remembered on each device.
 
 | Default (macOS) | Action | Action name |
 |---|---|---|
@@ -100,6 +100,24 @@ While the view has focus, the status bar shows its keys, with your own bindings 
 | Key | Action | Action name |
 |---|---|---|
 | `?` | Page the status-bar hints. | `plugin.outlinehints` |
+
+### Binding your own keys
+
+Every key with an action name above can be rebound in ⌘P → Change Keyboard Shortcuts, one `"action name": "Key+Combo"` per line. Thymer keeps a separate list for macOS and Windows/Linux, and for the desktop app and the browser, so a binding has to be added on each one you use.
+
+The modifiers are `Meta` (⌘ on a Mac, the Windows key elsewhere), `Ctrl`, `Alt` (⌥ on a Mac) and `Shift`.
+
+**A binding with `Shift` on a punctuation or number key is spelled differently per platform.** Thymer matches a binding against the character the key press produces, and that depends on the platform and the other modifiers:
+
+| Platform | Write | Example: Shift with the `/` key |
+|---|---|---|
+| Windows and Linux | The shifted character. | `"Ctrl+Shift+?"` |
+| macOS, with `Meta` (⌘) | The unshifted character. | `"Meta+Shift+/"` |
+| macOS, without `Meta` | The shifted character. | `"Ctrl+Shift+?"`, `"Shift+?"` |
+
+So fold cascade on `Ctrl+Shift+,` in Windows is written `"nav.foldCascade": "Ctrl+Shift+<"`, and the same keys with ⌘ on a Mac are written `"Meta+Shift+,"`. Letters are spelled the same everywhere (`"Ctrl+Shift+K"`), as are `[` and `]`.
+
+A binding spelled the other way is accepted but never fires, here or in the editor. The status bar shows no hint for one, which is how to spot it. Hints fold Shift into the character it produces: `"Ctrl+Shift+?"` reads **Ctrl+?**, and `"Meta+Shift+/"` on a Mac reads **⌘?**.
 
 ## Global plugin
 
